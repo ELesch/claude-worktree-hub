@@ -1,0 +1,24 @@
+{
+  "repo": "owner/repo",
+  "cloneUrl": "https://github.com/owner/repo.git",
+  "defaultBranch": "main",
+  "baseWorktree": "main",
+  "packageManager": "pnpm",
+  "installCmd": "pnpm install",
+  "verifyCmd": "pnpm verify",
+  "testCmd": "pnpm test",
+  "envFiles": [".env", ".env.test", ".env.local"],
+  "launch": {
+    "permissionMode": "auto",
+    "effort": "max",
+    "tabColor": true
+  },
+  "complexPromptPreamble": "/superpowers:using-superpowers",
+  "database": {
+    "enabled": false,
+    "provider": "supabase",
+    "migrationsDir": "supabase/migrations",
+    "schema": "public",
+    "sharedInstanceNote": ""
+  }
+}
