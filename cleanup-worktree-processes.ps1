@@ -57,10 +57,10 @@ $hubLeaf = Split-Path $Hub -Leaf
 
 # Long-running runners that DON'T self-exit (the "spawned for testing but never exits" class). Short-lived
 # build workers (tsc/eslint/<verifyCmd>/<testCmd>) are deliberately NOT here - they finish on their own.
-# The package-manager prefixes (npm/yarn/bun/<pm>) are kept generic so this works across stacks.
+# The package-manager prefixes (pnpm/npm/yarn/bun) are the known JS runners to detect across stacks.
 $strayNodeRe = '(?i)(vitest(?!\s+run)|jest\b(?!.*--(ci|run))|mocha\s+--watch|--watch\b|nodemon|ts-node-dev|' +
                'next\s+(dev|start)|vite(\s+(dev|preview))?\b|webpack(-dev-server|\s+serve)|' +
-               '(npm|yarn|bun|[a-z]+)(\.cjs)?\s+(run\s+)?dev|concurrently)'
+               '(pnpm|npm|yarn|bun)(\.cjs)?\s+(run\s+)?dev|concurrently)'
 
 # --- 1. OPEN worktrees (source of truth) ------------------------------------------------------
 $live = @(& git -C $Hub worktree list --porcelain 2>$null | Where-Object { $_ -like 'worktree *' } |
