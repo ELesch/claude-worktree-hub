@@ -3,6 +3,7 @@
   Dot-source it:  . "$PSScriptRoot\hub-lib.ps1"
   Functions: ConvertTo-Slug, Get-IssueAttachmentUrls, Save-IssueImages,
              ConvertTo-LocalLinks, Save-IssueBundle, Add-HubExclude
+  Requires $HubConfig in scope: dot-source hub-config.ps1 before hub-lib.ps1.
 #>
 
 function ConvertTo-Slug {
@@ -84,6 +85,7 @@ function Save-IssueBundle {
     <# Fetch an issue's full resources into $Dest: ISSUE.md (text + comments + metadata,
        with image links rewritten to local paths) and an issue-assets\ folder of images.
        Returns an object with IssueMd, AssetsDir, Images, Title, Number. #>
+    # Requires $HubConfig in scope: dot-source hub-config.ps1 before hub-lib.ps1.
     param(
         [Parameter(Mandatory)][int]$Issue,
         [Parameter(Mandatory)][string]$Dest,

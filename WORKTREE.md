@@ -4,7 +4,8 @@ You are an autonomous coding agent working in a **single isolated git worktree**
 (your hub's configured repo, set in `hub.config.json`).
 This file and `ISSUE.md` are **force-included** in your launch prompt via `@`-mentions — read and follow
 them exactly. Your specific **issue number, worktree folder, and branch** are given in the launch prompt;
-substitute them wherever this file shows `<N>`, `<FOLDER>`, `<BRANCH>`, `<M>` (the PR number you open).
+substitute them wherever this file shows `<N>`, `<FOLDER>`, `<BRANCH>`, `<M>` (the PR number you open),
+or `<defaultBranch>` (your hub's default branch, set in `hub.config.json`).
 
 These rules **override default behavior**; the only thing that outranks them is a direct instruction from
 the user in your window.
@@ -33,7 +34,7 @@ Work to the standard of a **professional app-development team**:
    guidance is in the launch prompt.)
 4. Validate with `<verifyCmd>` (e.g. `pnpm verify` — typecheck + lint) and **run/add tests that genuinely
    cover the fix**.
-5. Commit, `git push -u origin <BRANCH>`, then open a PR (`gh pr create`, base `main`). Use a conventional
+5. Commit, `git push -u origin <BRANCH>`, then open a PR (`gh pr create`, base `<defaultBranch>`). Use a conventional
    title (`fix(#<N>): …` / `feat(#<N>): …`) and put **`Fixes #<N>`** in the PR body so the issue auto-closes
    on merge. **DO NOT merge.**
 6. Finish with the **completion report** (section 4) as your **last output**.
@@ -56,8 +57,8 @@ write a **proper** `SPEC.md` + `PLAN.md` and **STOP for the user's review** befo
    genuinely large, independent, file-disjoint piece, spawn a **child worktree**:
    `& <hub>\spawn-child.ps1 -Parent <FOLDER> -Name <piece> -Title "<tab>" -Task "<brief>" [-Complex]`
    Commit a clean baseline first (the helper refuses a dirty parent). Children PR into **your** branch;
-   you assemble them and open the **single** PR to `main`. Respect the depth (2) and siblings (6) caps.
-5. Validate (`<verifyCmd>` + tests), open your PR to `main`, **do NOT merge**, then report + record.
+   you assemble them and open the **single** PR to `<defaultBranch>`. Respect the depth (2) and siblings (6) caps.
+5. Validate (`<verifyCmd>` + tests), open your PR to `<defaultBranch>`, **do NOT merge**, then report + record.
 
 ## 4. Completion report (always — your LAST output)
 
@@ -75,7 +76,7 @@ note, **never hidden**.
   'Verify|<✅/❌> typecheck · <✅/❌> lint  (<verifyCmd>)',
   'Migration(s)|none  (OR: <file.sql> - review-only, NOT applied to prod)',
   'Commits|<N> on <BRANCH> (<shortSHA>)',
-  'PR|#<M> <url>  (base main, NOT merged)',
+  'PR|#<M> <url>  (base <defaultBranch>, NOT merged)',
   'Status|✅ pushed · ✅ PR opened · ⏳ awaiting your review/merge',
   'Recommended follow-ups|<N found — see table below  /  none>'
 ```
@@ -122,7 +123,7 @@ Do **not** block on missing secrets; if the fix genuinely cannot be proven witho
   production.** Solvers run pre-merge; applying happens only at merge time (section 9).
 - **NEVER run a headless `claude --print` / `claude -p` session** — it bills outside the subscription
   (real money). All work stays in this interactive window.
-- Push only to **your** branch `<BRANCH>`; never to `main`, never force-push, never deploy.
+- Push only to **your** branch `<BRANCH>`; never to `<defaultBranch>`, never force-push, never deploy.
 - If the task balloons beyond its scope, write `SPEC.md` + `PLAN.md` and **STOP for review** (section 3).
 
 ## 9. Merge → migrate (only if the user explicitly asks YOU to merge)

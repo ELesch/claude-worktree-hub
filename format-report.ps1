@@ -13,10 +13,10 @@
 .PARAMETER Header2  Right column header (default "Result").
 .PARAMETER MaxResultWidth  Wrap the Result column past this display width (default 70).
 .EXAMPLE
-    .\format-report.ps1 -Title 'Issue #605 — merge' -Rows `
-      'Vercel build gate|✅ pass ("Deployment has completed") — checked before merging',
+    .\format-report.ps1 -Title 'Issue #42 — merge' -Rows `
+      'CI/build gate|✅ pass ("Deployment has completed") — checked before merging',
       'Mergeable state|✅ MERGEABLE / CLEAN',
-      'Merge|✅ Squash-merged as b6cbdda7, confirmed on origin/main'
+      'Merge|✅ Squash-merged as abc1234, confirmed on origin/<defaultBranch>'
 .EXAMPLE
     Get-Content rows.txt | .\format-report.ps1
 #>

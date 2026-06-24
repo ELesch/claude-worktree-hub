@@ -52,13 +52,13 @@ $sources = switch -Regex ($Surface) {
     '^deps' { 'package.json + lockfile: outdated / vulnerable deps, duplicate/heavy packages, unused deps.'; break }
     '^tests' { 'Test suite: coverage gaps on critical paths, flaky tests, missing e2e.'; break }
     '^module' { "The module/path '$subjKey' $Detail - review deeply for bugs, smells, missing tests, and risks."; break }
+    '^platform' { 'Hosting/deploy/build platform: deployment + build health, runtime/edge config, caching/CDN, function limits, environment configuration. Use your platform provider''s logs/dashboards if available.'; break }
     default { 'The whole application - breadth-first across major modules; fan out a subagent per area.' }
 }
 
+$preamble = if ($HubConfig.complexPromptPreamble) { $HubConfig.complexPromptPreamble + "`n`n" } else { '' }
 $prompt = @"
-/superpowers:using-superpowers
-
-You are a RECON (discovery) agent in a dedicated READ-ONLY git worktree for $($HubConfig.repo). Your job is a
+${preamble}You are a RECON (discovery) agent in a dedicated READ-ONLY git worktree for $($HubConfig.repo). Your job is a
 DEEP review of the '$Surface' surface$(if($Lens){" through the '$Lens' lens"}). You write findings + your
 lifecycle to the hub review LEDGER (SQLite). You do NOT change code, create branches, open PRs, or run
 'gh issue create' - a human triages the ledger and promotes findings to issues separately.

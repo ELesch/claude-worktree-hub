@@ -5,7 +5,7 @@
   "baseWorktree": "main",
   "packageManager": "pnpm",
   "installCmd": "pnpm install",
-  "verifyCmd": "pnpm verify",
+  "verifyCmd": "pnpm run verify",
   "testCmd": "pnpm test",
   "envFiles": [".env", ".env.test", ".env.local"],
   "launch": {

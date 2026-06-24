@@ -185,7 +185,7 @@ every open GitHub issue flows through the same review discipline before it earns
 printing the remediation commands; `-SkipReview` overrides (emergencies only). `monitor` shows each active
 worktree's owned-path count so file ownership across in-flight work is visible at a glance. The recon
 `finding → verify → promote` path still feeds in — a promoted finding becomes a `synced` issue with its
-scope/severity carried over. Design doc: `.review\design-issue-ledger-pipeline.md`.
+scope/severity carried over. See the **Issue lane** section above for the full design.
 
 **Overlap semantics:** two issues *conflict* when both **own** the same path (blocks co-scheduling);
 different files in the same directory is a *soft* note (shown, non-blocking) — the judgement call stays yours.

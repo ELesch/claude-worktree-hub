@@ -81,10 +81,9 @@ if (Test-Path $wtRules) { Copy-Item $wtRules (Join-Path $childPath 'WORKTREE.md'
 
 # --- build the child's seeded prompt ---
 if ($Complex) {
+    $preamble = if ($HubConfig.complexPromptPreamble) { $HubConfig.complexPromptPreamble + "`n`n" } else { '' }
     $promptBody = @"
-/superpowers:using-superpowers
-
-@WORKTREE.md
+${preamble}@WORKTREE.md
 
 Follow the standing rules in WORKTREE.md (force-included above): the quality bar, completion-report format,
 hub-ledger recording, env note, and hard constraints. CHILD OVERRIDE: open your PR with base = the parent
