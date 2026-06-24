@@ -1,0 +1,26 @@
+# --- runtime data: never committed to the shareable hub ---
+.bare/
+# the bare-repo redirect pointer (created by init-hub.ps1)
+/.git
+# worktrees (created on demand by the helper scripts)
+/main/
+/agent-*/
+/issue-*/
+/recon-*/
+/review-*/
+/wt-*/
+/*--*/
+# generated per-worktree launchers + logs
+.launchers/
+# downloaded issue screenshots
+.issue-images/
+# SQLite ledger + rendered dashboards (review-coverage.ps1 init builds a fresh db)
+.review/*.db
+.review/*.db-*
+.review/*.html
+# local config with the user's repo + secrets
+hub.config.json
+# env files (per-worktree secrets)
+.env
+.env.*
+!.env.example
