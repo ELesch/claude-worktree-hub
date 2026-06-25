@@ -5,8 +5,8 @@
     that remove-worktree.ps1 does NOT do (it leaves the window open and the node_modules folder on disk).
 .DESCRIPTION
     Run from the hub root. For each named worktree this does, in order:
-      1. KILL its terminal session - the launcher pwsh window + its claude.exe child, matched by the
-         worktree folder name in the process command line - releasing the CWD lock that blocks deletion.
+      1. KILL its terminal session - the launcher pwsh window + its claude.exe/node children, bound to the
+         worktree by a path-SEGMENT match (+ process-tree descendants) - releasing the CWD lock for deletion.
       2. git worktree remove --force   (on Windows this usually unregisters but leaves the folder).
       3. Git Bash `rm -rf` the leftover folder git left behind (node_modules quirk); Remove-Item fallback.
       4. Optional branch delete (-DeleteBranch).
@@ -20,8 +20,10 @@
       - -DryRun prints exactly what it WOULD kill/remove and changes nothing.
       - -VerifyMerged requires the worktree's PR to be MERGED on GitHub first (gh - squash-merge-aware:
         git ancestry shows squash-merged branches as "ahead", so PR status is the authoritative check).
-      - The terminal kill matches ONLY processes whose command line contains the worktree folder name and
-        ALWAYS excludes THIS process + its parent, so it can never kill the orchestrator session.
+      - The terminal kill binds processes by a bounded path-SEGMENT match of the worktree folder (NOT a
+        bare substring, which prefix-collides, e.g. 'agent' matching 'agent-foo'), plus their process-tree
+        descendants, and ALWAYS protects THIS process + its full ancestor chain - so it can never kill the
+        orchestrator or a different live worktree's session.
       - Branch delete is safe `-d` by default (refuses unmerged); `-D` only with -Force or -VerifyMerged.
 .EXAMPLE
     .\retire-worktree.ps1 -Name issue-564-server-side-rce-via-automation-portal -VerifyMerged -DeleteBranch
@@ -44,9 +46,14 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'hub-config.ps1')   # sets $Hub + $HubConfig
 if (-not $Repo) { $Repo = $HubConfig.repo }
 
-# This process + its parent must NEVER be killed by the terminal-kill below (don't suicide the orchestrator).
+# This process + its FULL ancestor chain must NEVER be killed by the terminal-kill below (don't suicide
+# the orchestrator) - important because the kill now expands to process-tree descendants.
 $selfPid   = $PID
 $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$selfPid" -ErrorAction SilentlyContinue).ParentProcessId
+$parentMap = @{}; foreach ($p in (Get-CimInstance Win32_Process)) { $parentMap[[int]$p.ProcessId] = [int]$p.ParentProcessId }
+$protectedPids = @{}; $cur = [int]$selfPid; $hops = 0
+while ($cur -and $parentMap.ContainsKey($cur) -and $hops -lt 25) { $protectedPids[$cur] = $true; $cur = $parentMap[$cur]; $hops++ }
+if ($parentPid) { $protectedPids[[int]$parentPid] = $true }
 
 # Live worktree folders = source of truth for wildcard expansion + validation.
 $liveWts = @(git -C $Hub worktree list --porcelain | Where-Object { $_ -like 'worktree *' } |
@@ -95,10 +102,36 @@ $results = foreach ($folder in $targets) {
     }
 
     # --- 1. kill the terminal session (release the CWD lock) ---
-    $procs = @(Get-CimInstance Win32_Process | Where-Object {
-        $_.ProcessId -ne $selfPid -and $_.ProcessId -ne $parentPid -and
-        $_.CommandLine -and $_.CommandLine.Contains($folder)
-    })
+    # Bind processes to THIS worktree by a bounded path-SEGMENT match, NOT a bare substring: a substring
+    # match (.Contains) prefix-collides - retiring 'agent' would also match (and kill) a live 'agent-foo'
+    # session. Mirror cleanup-worktree-processes.ps1's Get-WorktreeRef - the folder must appear as a
+    # launcher path (\.launchers\<folder>.ps1), a `Worktree: <folder>` token, or a real path segment
+    # (\<folder>\, \<folder>", \<folder><end>). Then expand to DESCENDANTS so the claude.exe/node children
+    # (whose own command line lacks the folder, but whose CWD is the worktree so they hold the lock too)
+    # are killed via the process tree.
+    # Boundary = "not followed by a folder-name char" ([A-Za-z0-9._-]), so 'agent' never matches inside
+    # 'agent-foo'; the launcher form <folder>.ps1 is allowed explicitly (its trailing '.' is a name char).
+    $esc = [regex]::Escape($folder)
+    $boundRe = '(?i)(?:[\\/]' + $esc + '(?:\.ps1|(?![A-Za-z0-9._-])))|(?:Worktree:\s*' + $esc + '(?![A-Za-z0-9._-]))'
+    $allProcs = @(Get-CimInstance Win32_Process)
+    $byId = @{}; foreach ($p in $allProcs) { $byId[[int]$p.ProcessId] = $p }
+    $childrenOf = @{}
+    foreach ($p in $allProcs) {
+        $pp = [int]$p.ParentProcessId
+        if (-not $childrenOf.ContainsKey($pp)) { $childrenOf[$pp] = New-Object System.Collections.Generic.List[int] }
+        $childrenOf[$pp].Add([int]$p.ProcessId)
+    }
+    $boundIds = New-Object 'System.Collections.Generic.HashSet[int]'
+    foreach ($p in $allProcs) {
+        if (-not $p.CommandLine -or $p.CommandLine -notmatch $boundRe) { continue }
+        $stack = New-Object System.Collections.Stack; [void]$stack.Push([int]$p.ProcessId)
+        while ($stack.Count) {
+            $id = [int]$stack.Pop()
+            if (-not $boundIds.Add($id)) { continue }   # already visited
+            if ($childrenOf.ContainsKey($id)) { foreach ($c in $childrenOf[$id]) { [void]$stack.Push($c) } }
+        }
+    }
+    $procs = @($boundIds | Where-Object { -not $protectedPids.ContainsKey($_) } | ForEach-Object { $byId[$_] })
     $row.killed = $procs.Count
     if ($DryRun) {
         foreach ($p in $procs) { Write-Host "   [dry] kill PID $($p.ProcessId) [$($p.Name)]" -ForegroundColor DarkGray }

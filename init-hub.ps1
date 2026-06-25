@@ -39,12 +39,18 @@ Write-Host "Bootstrapping hub for $Repo at $Hub" -ForegroundColor Green
 foreach ($exe in 'git', 'gh') {
     if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { throw "$exe not found on PATH." }
 }
-if (-not $DryRun -and (Test-Path (Join-Path $Hub '.bare'))) { throw ".bare already exists - hub looks initialized. Aborting." }
+if (-not $DryRun -and (Test-Path (Join-Path $Hub '.bare'))) { throw ".bare already exists - hub looks initialized. Aborting. (If a previous run half-finished, remove BOTH .bare and .git, then re-run.)" }
 
 Step "Bare-cloning $CloneUrl -> .bare\" { Invoke-Git clone --bare $CloneUrl (Join-Path $Hub '.bare') }
 
 Step "Writing BOM-free/LF .git redirect pointer" {
-    [System.IO.File]::WriteAllText((Join-Path $Hub '.git'), "gitdir: ./.bare`n", (New-Object System.Text.UTF8Encoding($false)))
+    # A fresh `git clone` leaves `.git` as a DIRECTORY; [IO.File]::WriteAllText can't overwrite a
+    # directory path (it throws "Access to the path ... is denied"). Remove any existing `.git` first
+    # - the clone's own dir, or a stale pointer from a half-finished run. The hub root's own git
+    # history is meant to be discarded here anyway, and `.gitignore` already ignores `/.git`.
+    $dotGit = Join-Path $Hub '.git'
+    if (Test-Path $dotGit) { Remove-Item $dotGit -Recurse -Force }
+    [System.IO.File]::WriteAllText($dotGit, "gitdir: ./.bare`n", (New-Object System.Text.UTF8Encoding($false)))
 }
 
 Step "Configuring fetch refspec + gc.auto=0" {
