@@ -342,9 +342,14 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
         switch ($Sub) {
 
             'sync' {
-                $raw = & gh issue list --repo $Repo --state open --limit 300 --json number,title,labels,author 2>$null
+                $fetchLimit = 1000
+                $raw = & gh issue list --repo $Repo --state open --limit $fetchLimit --json number,title,labels,author 2>$null
                 if (-not $raw) { Write-Host "no data from gh issue list (auth / repo?)." -ForegroundColor Yellow; break }
                 $json = @($raw | ConvertFrom-Json)
+                # If the fetch hit the cap the open-issue list may be TRUNCATED; in that case the
+                # "mark closed" sweep below must be skipped (fail safe) or it would wrongly flip the
+                # still-open overflow (issues beyond the cap) to 'closed' and drop them from the pipeline.
+                $truncated = ($json.Count -ge $fetchLimit)
                 $open = @(); $new = 0; $upd = 0
                 foreach ($i in $json) {
                     $num = [int]$i.number; $open += $num
@@ -373,7 +378,12 @@ ON CONFLICT(number) DO UPDATE SET
 "@
                 }
                 $openList = ($open -join ',')
-                if ($openList) { Exec "UPDATE issue SET review_status='closed', updated_at=datetime('now') WHERE number NOT IN ($openList) AND review_status!='closed';" }
+                if ($truncated) {
+                    Write-Host "WARNING: open-issue list may be truncated at $fetchLimit; SKIPPING the 'mark closed' sweep to avoid corrupting the ledger." -ForegroundColor Yellow
+                }
+                elseif ($openList) {
+                    Exec "UPDATE issue SET review_status='closed', updated_at=datetime('now') WHERE number NOT IN ($openList) AND review_status!='closed';"
+                }
                 Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('orchestrator','issue','sync','$($open.Count) open: $new new, $upd updated');"
                 Write-Host "synced $($open.Count) open issues ($new new, $upd updated)." -ForegroundColor Green
             }
