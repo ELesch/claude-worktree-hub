@@ -366,6 +366,16 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
 
     'dismiss-rec' { if (-not $Id) { throw "dismiss-rec requires -Id" }; Exec "UPDATE recommendation SET status='dismissed' WHERE id=$Id;"; Write-Host "recommendation #$Id dismissed." -ForegroundColor Yellow }
 
+    # ---- hub findings: problems with the hub's OWN operating layer (prompts/config/scripts/memory/env) ----
+    'hubfind' {
+        if (-not $Worktree -or -not $Title) { throw "hubfind requires -Worktree (folder or 'orchestrator') and -Title; use -Category <env|tool|prompt|config|memory|other>, -Detail, -Severity" }
+        $wt = q $Worktree
+        $defWty = if ($Worktree -eq 'orchestrator') { 'orchestrator' } else { 'solver' }
+        Exec "INSERT INTO hubfinding(source,wtype,category,title,detail,severity) VALUES('$wt',COALESCE((SELECT wtype FROM worktree WHERE name='$wt'),'$defWty'),'$(q $Category)','$(q $Title)','$(q $Detail)','$(q $Severity)');"
+        Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('$wt','hub','hubfind','$(q $Title)');"
+        Write-Host "hub finding recorded: $Title" -ForegroundColor Green
+    }
+
     # ---- issue lane: GH issue -> ledger -> review (orchestrator subagent fan-out) -> approve -> overlap-aware deploy ----
 
     'issue' {

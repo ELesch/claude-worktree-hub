@@ -30,3 +30,25 @@ Describe 'hubfinding schema' {
         (& sqlite3 $db "SELECT status FROM hubfinding WHERE id=1;") | Should -Be 'open'
     }
 }
+
+Describe 'hubfind' {
+    It 'records an open finding with source, category, severity' {
+        $db = New-TempDb
+        & $script:rc hubfind -DbPath $db -Worktree 'issue-9-x' -Category env -Title 'assumed bash' -Detail 'ran rm -rf' -Severity High | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT source,category,severity,status FROM hubfinding WHERE id=1;") | Should -Be 'issue-9-x|env|High|open'
+    }
+    It 'defaults severity to Medium and source wtype to solver for an unknown worktree' {
+        $db = New-TempDb
+        & $script:rc hubfind -DbPath $db -Worktree 'agent-z' -Category tool -Title 'missing tool' | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT severity,wtype FROM hubfinding WHERE id=1;") | Should -Be 'Medium|solver'
+    }
+    It "tags wtype 'orchestrator' when the source is orchestrator" {
+        $db = New-TempDb
+        & $script:rc hubfind -DbPath $db -Worktree orchestrator -Category prompt -Title 'unclear rule' | Out-Null
+        (& sqlite3 $db "SELECT wtype FROM hubfinding WHERE id=1;") | Should -Be 'orchestrator'
+    }
+    It 'throws when -Title is missing' {
+        $db = New-TempDb
+        { & $script:rc hubfind -DbPath $db -Worktree 'w' -Category env } | Should -Throw
+    }
+}
