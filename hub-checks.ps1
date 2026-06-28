@@ -55,6 +55,17 @@ function Get-PackageManagerFromLockfile {
     return $null
 }
 
+function Resolve-InstallCommand {
+    # Pure: given a check Name + which installers are present, return a runnable install
+    # command string (winget preferred), or $null if we can't safely auto-install.
+    param([Parameter(Mandatory)][string]$CheckName, [switch]$HasWinget, [switch]$HasChoco)
+    $winget = @{ 'PowerShell 7+'='Microsoft.PowerShell'; 'git on PATH'='Git.Git'; 'gh on PATH'='GitHub.cli'; 'sqlite3 on PATH'='SQLite.SQLite'; 'bash on PATH'='Git.Git' }
+    $choco  = @{ 'git on PATH'='git'; 'gh on PATH'='gh'; 'sqlite3 on PATH'='sqlite'; 'bash on PATH'='git' }
+    if ($HasWinget -and $winget.ContainsKey($CheckName)) { return "winget install --id $($winget[$CheckName]) -e" }
+    if ($HasChoco  -and $choco.ContainsKey($CheckName))  { return "choco install $($choco[$CheckName]) -y" }
+    return $null
+}
+
 # --- thin probe wrappers (mock these in tests; they isolate all side effects) ---
 
 function Test-OnPath {

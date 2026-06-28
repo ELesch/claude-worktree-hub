@@ -74,6 +74,24 @@ Describe 'Get-PackageManagerFromLockfile' {
     }
 }
 
+Describe 'Resolve-InstallCommand' {
+    It 'returns the winget command for sqlite3 when winget is present' {
+        Resolve-InstallCommand -CheckName 'sqlite3 on PATH' -HasWinget | Should -Be 'winget install --id SQLite.SQLite -e'
+    }
+    It 'returns the choco command for sqlite3 when only choco is present' {
+        Resolve-InstallCommand -CheckName 'sqlite3 on PATH' -HasChoco | Should -Be 'choco install sqlite -y'
+    }
+    It 'prefers winget when both installers are present' {
+        Resolve-InstallCommand -CheckName 'sqlite3 on PATH' -HasWinget -HasChoco | Should -Be 'winget install --id SQLite.SQLite -e'
+    }
+    It 'returns $null when no installer is present' {
+        Resolve-InstallCommand -CheckName 'sqlite3 on PATH' | Should -BeNullOrEmpty
+    }
+    It 'returns $null for an unknown check name (not auto-installable)' {
+        Resolve-InstallCommand -CheckName 'claude on PATH' -HasWinget -HasChoco | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Test-ConfigPlaceholder' {
     It 'is true when config is $null' {
         Test-ConfigPlaceholder -Config $null | Should -BeTrue

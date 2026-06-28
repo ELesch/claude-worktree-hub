@@ -45,24 +45,22 @@ function Invoke-PreflightPhase {
     Write-Phase 'Phase 1/6 - Prerequisites'
     $cfg = Get-ConfigSafe
     $checks = @(Get-HubReadiness -Config $cfg -HubRoot $Hub | Where-Object { $_.Category -eq 'prereq' })
-    $hasInstaller = (Test-OnPath -Name 'winget') -or (Test-OnPath -Name 'choco')
     foreach ($c in $checks) {
         if ($c.Status -eq 'ok') { Write-Note "OK   $($c.Name)"; continue }
         Write-Host ("    NEEDS: {0} - {1}" -f $c.Name, $c.Detail) -ForegroundColor Yellow
         Write-Note "fix: $($c.Fix)"
+        # The check's Fix field is human-readable display text, NOT a runnable command.
+        # Resolve a real, runnable install command (winget preferred) from the check name.
+        $cmd = Resolve-InstallCommand -CheckName $c.Name -HasWinget:(Test-OnPath 'winget') -HasChoco:(Test-OnPath 'choco')
         if ($c.Name -eq 'gh authenticated') {
-            if (Confirm-Action "Run 'gh auth login' now?") {
-                if (-not $DryRun) { & gh auth login; & gh auth setup-git }
+            if (Confirm-Action "Run 'gh auth login' now?") { if (-not $DryRun) { & gh auth login; & gh auth setup-git } }
+        }
+        elseif ($cmd) {
+            if (Confirm-Action "Run '$cmd' now?") {
+                if (-not $DryRun) { & cmd /c $cmd; if ($LASTEXITCODE -ne 0) { Write-Note "install exited $LASTEXITCODE - install manually: $($c.Fix)" } }
             }
         }
-        elseif ($c.Fix -match '^(winget|choco) ' -and $hasInstaller) {
-            if (Confirm-Action "Run '$($c.Fix)' now?") {
-                if (-not $DryRun) { & cmd /c $c.Fix }
-            }
-        }
-        else {
-            Write-Note 'Install it, then re-run setup-hub.ps1.'
-        }
+        else { Write-Note "Install it, then re-run setup-hub.ps1.  (hint: $($c.Fix))" }
     }
 }
 
@@ -77,7 +75,7 @@ function Invoke-BootstrapPhase {
         $url = Read-Host '    Target repo clone URL (https://github.com/<owner>/<repo>.git)'
     }
     if (-not $url) { Write-Note 'No clone URL given; skipping bootstrap.'; return }
-    Write-Note "Running init-hub.ps1 -CloneUrl $url"
+    Write-Note ("{0}Running init-hub.ps1 -CloneUrl {1}" -f $(if($DryRun){'(dry-run) would: '}else{''}), $url)
     if (-not $DryRun) { & (Join-Path $Hub 'init-hub.ps1') -CloneUrl $url }
 }
 
@@ -145,12 +143,12 @@ function Invoke-LedgerPhase {
     if (-not (Test-OnPath -Name 'sqlite3')) { Write-Note 'sqlite3 not on PATH; cannot init the ledger yet. Fix prereqs then re-run.'; return }
     $rc = Join-Path $Hub 'review-coverage.ps1'
     if (-not (Test-LedgerSchema -HubRoot $Hub)) {
-        Write-Note 'Initializing ledger schema (review-coverage.ps1 init)...'
+        Write-Note ("{0}Initializing ledger schema (review-coverage.ps1 init)..." -f $(if($DryRun){'(dry-run) would: '}else{''}))
         if (-not $DryRun) { & $rc init }
     }
     else { Write-Note 'Ledger schema already present.' }
     if (-not (Test-LedgerSeeded -HubRoot $Hub)) {
-        Write-Note 'Seeding starter topics (review-coverage.ps1 seed)...'
+        Write-Note ("{0}Seeding starter topics (review-coverage.ps1 seed)..." -f $(if($DryRun){'(dry-run) would: '}else{''}))
         if (-not $DryRun) { & $rc seed }
     }
     else { Write-Note 'Ledger already seeded.' }
@@ -158,11 +156,14 @@ function Invoke-LedgerPhase {
 
 # ---------------- Phase 6: final readiness ----------------
 function Invoke-ReadinessPhase {
+    # Returns the doctor's exit code (0 ready / 1 blockers); 0 under -DryRun.
     Write-Phase 'Phase 6/6 - Readiness report'
-    if ($DryRun) { Write-Note '(dry-run) would run hub-doctor.ps1 for the final verdict.'; return }
+    if ($DryRun) { Write-Note '(dry-run) would run hub-doctor.ps1 for the final verdict.'; return 0 }
     & (Join-Path $Hub 'hub-doctor.ps1')
-    if ($LASTEXITCODE -eq 0) { Write-Host "`nSetup complete - hub is READY." -ForegroundColor Green }
+    $doctorExit = $LASTEXITCODE
+    if ($doctorExit -eq 0) { Write-Host "`nSetup complete - hub is READY." -ForegroundColor Green }
     else { Write-Host "`nSetup ran, but blockers remain (see above). Fix them and re-run .\setup-hub.ps1." -ForegroundColor Yellow }
+    return $doctorExit
 }
 
 # ---------------- main ----------------
@@ -172,4 +173,7 @@ Invoke-BootstrapPhase
 Invoke-ConfigPhase
 Invoke-EnvPhase
 Invoke-LedgerPhase
-Invoke-ReadinessPhase
+# Capture the doctor's verdict and make the wizard's exit code intentional, so a residual
+# $LASTEXITCODE from an earlier probe (e.g. git -C .bare on a hub with no .bare) can't leak.
+$doctorExit = Invoke-ReadinessPhase
+if ($DryRun) { exit 0 } else { exit $doctorExit }
