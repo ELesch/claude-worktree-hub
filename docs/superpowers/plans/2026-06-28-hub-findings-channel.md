@@ -150,7 +150,7 @@ git commit -m "feat(ledger): defensive config load + -Db/-Target params for revi
 ## Task 2: Schema — the `hubfinding` table in `init`
 
 **Files:**
-- Modify: `review-coverage.ps1:113` and `:120` (inside the `init` heredoc)
+- Modify: `review-coverage.ps1:128` and `:135` (inside the `init` heredoc)
 - Test: `review-coverage.Tests.ps1`
 
 - [ ] **Step 1: Write the failing test**
@@ -179,7 +179,7 @@ Expected: the two new tests FAIL (`no such table: hubfinding`).
 
 - [ ] **Step 3: Add the table to the `init` heredoc**
 
-In `review-coverage.ps1`, find this line (line 113):
+In `review-coverage.ps1`, find this line (line 128):
 
 ```
 CREATE INDEX IF NOT EXISTS ix_activity_at ON activity(at);
@@ -197,7 +197,7 @@ CREATE INDEX IF NOT EXISTS ix_activity_at ON activity(at);
 
 - [ ] **Step 4: Add the status index**
 
-Find this line (line 120):
+Find this line (line 135):
 
 ```
 CREATE INDEX IF NOT EXISTS ix_issue_target_path ON issue_target(path);
@@ -227,7 +227,7 @@ git commit -m "feat(ledger): add hubfinding table to review-coverage init"
 ## Task 3: The `hubfind` verb (log a hub finding)
 
 **Files:**
-- Modify: `review-coverage.ps1:336` (insert after the `dismiss-rec` verb)
+- Modify: `review-coverage.ps1:351` (insert after the `dismiss-rec` verb)
 - Test: `review-coverage.Tests.ps1`
 
 - [ ] **Step 1: Write the failing test**
@@ -265,7 +265,7 @@ Expected: the `hubfind` tests FAIL (the `switch` has no `hubfind` branch, so it 
 
 - [ ] **Step 3: Implement the `hubfind` verb**
 
-In `review-coverage.ps1`, find the `dismiss-rec` line (line 336):
+In `review-coverage.ps1`, find the `dismiss-rec` line (line 351):
 
 ```powershell
     'dismiss-rec' { if (-not $Id) { throw "dismiss-rec requires -Id" }; Exec "UPDATE recommendation SET status='dismissed' WHERE id=$Id;"; Write-Host "recommendation #$Id dismissed." -ForegroundColor Yellow }
@@ -399,7 +399,7 @@ git commit -m "feat(ledger): add hub-findings (list) and hub-resolve (close) ver
 ## Task 5: Surface open hub findings in `monitor`
 
 **Files:**
-- Modify: `review-coverage.ps1:316` (inside the `monitor` verb)
+- Modify: `review-coverage.ps1:331` (inside the `monitor` verb)
 - Test: `review-coverage.Tests.ps1`
 
 - [ ] **Step 1: Write the failing test**
@@ -425,7 +425,7 @@ Expected: FAIL (`monitor` does not yet print the hub-findings section).
 
 - [ ] **Step 3: Add the monitor block**
 
-In `review-coverage.ps1`, find the last line of the `monitor` verb (line 316):
+In `review-coverage.ps1`, find the last line of the `monitor` verb (line 331):
 
 ```powershell
         Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='proposed' ORDER BY id LIMIT $N;"
