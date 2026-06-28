@@ -21,6 +21,11 @@ $ErrorActionPreference = 'Stop'
 $Hub = $PSScriptRoot
 . (Join-Path $Hub 'hub-checks.ps1')
 
+# Set true if Phase 1 actually runs an installer. A winget/choco install updates the
+# machine/user PATH but NOT this process's $env:PATH, so freshly-installed tools won't be
+# usable until a NEW terminal is opened - we stop after Phase 1 and tell the user to re-run.
+$script:installsRan = $false
+
 function Write-Phase { param([string]$Title) Write-Host "`n==> $Title" -ForegroundColor Cyan }
 function Write-Note  { param([string]$Msg)   Write-Host "    $Msg" -ForegroundColor DarkGray }
 
@@ -52,12 +57,17 @@ function Invoke-PreflightPhase {
         # The check's Fix field is human-readable display text, NOT a runnable command.
         # Resolve a real, runnable install command (winget preferred) from the check name.
         $cmd = Resolve-InstallCommand -CheckName $c.Name -HasWinget:(Test-OnPath 'winget') -HasChoco:(Test-OnPath 'choco')
-        if ($c.Name -eq 'gh authenticated') {
+        # gh-auth offers are gated on gh actually being on PATH: if gh was just installed this
+        # run it isn't usable yet (PATH is stale), and invoking it would throw under Stop.
+        if ($c.Name -eq 'gh authenticated' -and (Test-OnPath 'gh')) {
             if (Confirm-Action "Run 'gh auth login' now?") { if (-not $DryRun) { & gh auth login; & gh auth setup-git } }
+        }
+        elseif ($c.Name -eq 'gh git credential helper' -and (Test-OnPath 'gh')) {
+            if (Confirm-Action "Run 'gh auth setup-git' now?") { if (-not $DryRun) { & gh auth setup-git } }
         }
         elseif ($cmd) {
             if (Confirm-Action "Run '$cmd' now?") {
-                if (-not $DryRun) { & cmd /c $cmd; if ($LASTEXITCODE -ne 0) { Write-Note "install exited $LASTEXITCODE - install manually: $($c.Fix)" } }
+                if (-not $DryRun) { & cmd /c $cmd; $script:installsRan = $true; if ($LASTEXITCODE -ne 0) { Write-Note "install exited $LASTEXITCODE - install manually: $($c.Fix)" } }
             }
         }
         else { Write-Note "Install it, then re-run setup-hub.ps1.  (hint: $($c.Fix))" }
@@ -95,7 +105,10 @@ function Invoke-ConfigPhase {
         }
     }
 
-    $baseDir = Join-Path $Hub $cfg.baseWorktree
+    # Read raw above for write-back, but a sparse hand-edited config may omit baseWorktree;
+    # default it locally (matches hub-config.ps1) so Join-Path can't throw on a $null child.
+    $baseWt = if ($cfg.baseWorktree) { $cfg.baseWorktree } else { 'main' }
+    $baseDir = Join-Path $Hub $baseWt
     $detected = Get-PackageManagerFromLockfile -WorktreePath $baseDir
     if ($detected -and $detected -ne $cfg.packageManager) {
         Write-Host ("    Lockfile suggests '{0}' but config uses '{1}'." -f $detected, $cfg.packageManager) -ForegroundColor Yellow
@@ -169,6 +182,11 @@ function Invoke-ReadinessPhase {
 # ---------------- main ----------------
 if ($DryRun) { Write-Host 'DRY RUN - no changes will be made.' -ForegroundColor Yellow }
 Invoke-PreflightPhase
+if ($script:installsRan) {
+    Write-Host "`nInstalled tools won't be on PATH until you open a NEW terminal." -ForegroundColor Yellow
+    Write-Host "Open a fresh terminal and re-run .\setup-hub.ps1 to continue (it resumes where it left off)." -ForegroundColor Yellow
+    exit 0
+}
 Invoke-BootstrapPhase
 Invoke-ConfigPhase
 Invoke-EnvPhase
