@@ -45,14 +45,25 @@ param(
     [string]$Targets, [string]$Reads, [string]$Effort, [string]$Track,   # issue-review fields
     [switch]$Unverified, [switch]$Dismiss, [switch]$All,
     [string]$Repo,
+    [string]$Target,    # hub-resolve: where the fix landed (prompt|config|script|memory). NB: distinct from -Targets (issue owned-paths).
+    [string]$DbPath,    # override the ledger path (tests / pre-bootstrap); default <hub>\.review\coverage.db
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'hub-config.ps1')   # sets $Hub + $HubConfig
-if (-not $Repo) { $Repo = $HubConfig.repo }
-$reviewDir = Join-Path $Hub '.review'
-if (-not (Test-Path $reviewDir)) { New-Item -ItemType Directory -Force -Path $reviewDir | Out-Null }
-$db = Join-Path $reviewDir 'coverage.db'
+# Ledger/monitor verbs are local SQLite and must work even before the hub is configured
+# (no hub.config.json yet — tests, or `monitor` on a half-set-up hub). Only the GitHub/
+# base-worktree verbs (seed / promote / file-rec / issue sync) actually need config.
+try { . (Join-Path $PSScriptRoot 'hub-config.ps1') }   # sets $Hub + $HubConfig
+catch { $Hub = $PSScriptRoot; $HubConfig = $null; $configError = $_ }
+if (-not $Repo -and $HubConfig) { $Repo = $HubConfig.repo }
+if (-not $HubConfig -and (($Command -in @('seed', 'promote', 'file-rec')) -or ($Command -eq 'issue' -and $Sub -eq 'sync'))) {
+    throw $configError
+}
+$db = if ($DbPath) { $DbPath } else {
+    $reviewDir = Join-Path $Hub '.review'
+    if (-not (Test-Path $reviewDir)) { New-Item -ItemType Directory -Force -Path $reviewDir | Out-Null }
+    Join-Path $reviewDir 'coverage.db'
+}
 
 function q([string]$s) { if ($null -eq $s) { return '' } ($s -replace "'", "''") }
 # .timeout makes concurrent writers (8+ solver worktrees) wait instead of failing with "database is locked"
