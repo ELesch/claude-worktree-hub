@@ -117,6 +117,54 @@ function Invoke-ConfigPhase {
     elseif (-not $dirty) { Write-Note 'Config looks good; no changes.' }
 }
 
+# ---------------- Phase 4: env scaffold ----------------
+function Invoke-EnvPhase {
+    Write-Phase 'Phase 4/6 - Secrets / env scaffold'
+    $cfg = Get-ConfigSafe
+    if (-not $cfg) { Write-Note 'No config; skipping env scaffold.'; return }
+    $baseDir = Join-Path $Hub $cfg.baseWorktree
+    $missing = Get-MissingEnvFiles -HubRoot $Hub -Config $cfg
+    if (-not $missing) { Write-Note 'All configured env files present.'; return }
+    foreach ($f in $missing) {
+        $example = Join-Path $baseDir "$f.example"
+        if (Test-Path $example) {
+            if (Confirm-Action "Copy $f.example -> $f in $($cfg.baseWorktree)\ (you fill in secrets)?") {
+                if (-not $DryRun) { Copy-Item $example (Join-Path $baseDir $f) -Force }
+                Write-Note "Created $($cfg.baseWorktree)\$f - edit it to add real secret values."
+            }
+        }
+        else {
+            Write-Note "Missing $f and no $f.example to copy. Create $($cfg.baseWorktree)\$f manually if your app needs it."
+        }
+    }
+}
+
+# ---------------- Phase 5: ledger ----------------
+function Invoke-LedgerPhase {
+    Write-Phase 'Phase 5/6 - Ledger (SQLite)'
+    if (-not (Test-OnPath -Name 'sqlite3')) { Write-Note 'sqlite3 not on PATH; cannot init the ledger yet. Fix prereqs then re-run.'; return }
+    $rc = Join-Path $Hub 'review-coverage.ps1'
+    if (-not (Test-LedgerSchema -HubRoot $Hub)) {
+        Write-Note 'Initializing ledger schema (review-coverage.ps1 init)...'
+        if (-not $DryRun) { & $rc init }
+    }
+    else { Write-Note 'Ledger schema already present.' }
+    if (-not (Test-LedgerSeeded -HubRoot $Hub)) {
+        Write-Note 'Seeding starter topics (review-coverage.ps1 seed)...'
+        if (-not $DryRun) { & $rc seed }
+    }
+    else { Write-Note 'Ledger already seeded.' }
+}
+
+# ---------------- Phase 6: final readiness ----------------
+function Invoke-ReadinessPhase {
+    Write-Phase 'Phase 6/6 - Readiness report'
+    if ($DryRun) { Write-Note '(dry-run) would run hub-doctor.ps1 for the final verdict.'; return }
+    & (Join-Path $Hub 'hub-doctor.ps1')
+    if ($LASTEXITCODE -eq 0) { Write-Host "`nSetup complete - hub is READY." -ForegroundColor Green }
+    else { Write-Host "`nSetup ran, but blockers remain (see above). Fix them and re-run .\setup-hub.ps1." -ForegroundColor Yellow }
+}
+
 # ---------------- main ----------------
 if ($DryRun) { Write-Host 'DRY RUN - no changes will be made.' -ForegroundColor Yellow }
 Invoke-PreflightPhase
