@@ -110,7 +110,7 @@ record — staged candidate issues; lifecycle **proposed → verified → filed 
 dates and a `github_issue` link) · **finding_link** (related/dependency edges between findings: `related` /
 `duplicate-of` / `depends-on` / `blocks`) · **activity** (lifecycle event feed from every worktree) · **worktree**
 (ONE row per worktree, status updated as it progresses = the live monitor) · **recommendation** (out-of-scope
-follow-ups a SOLVER found while fixing its issue: proposed → filed as a GH issue / dismissed; same verify fields).
+follow-ups a SOLVER found while fixing its issue: proposed → filed as a GH issue / dismissed; same verify fields) · **hubfinding** (problems with the hub's OWN operating layer — prompts/config/scripts/memory/env — logged by any worktree or the orchestrator; lifecycle open → resolved/dismissed, fixed by editing a hub artifact, **never** a GH issue).
 
 **Monitoring every worktree:** the orchestrator `register`s each worktree at launch; the agent reports
 `progress` (working → spec-gate → pr-open, or blocked) and `recommend`s any out-of-scope issues it found; then
@@ -128,6 +128,8 @@ fan-out (one subagent per finding); it writes only verdicts/links to the ledger,
 
 ```powershell
 .\review-coverage.ps1 init ; .\review-coverage.ps1 seed     # one-time: schema + scan repo -> topics  (setup-hub.ps1 runs these automatically)
+# existing hub upgrading to the hub-findings channel? re-run init once (idempotent) to add the hubfinding table:
+.\review-coverage.ps1 init
 .\review-coverage.ps1 due  -N 8                              # what's due now (priority x staleness)
 .\review-coverage.ps1 run  -N 3                              # launch recon for the top-3 due topics
 .\review-coverage.ps1 report                                 # coverage %, oldest unreviewed, by area
@@ -139,6 +141,10 @@ fan-out (one subagent per finding); it writes only verdicts/links to the ledger,
 .\review-coverage.ps1 monitor                                # live status of EVERY worktree + pending follow-ups
 .\ledger-to-html.ps1                                         # render ALL open items -> ONE self-contained HTML dashboard + open in Chrome (-NoOpen to just write it)
 .\review-coverage.ps1 recommendations ; .\review-coverage.ps1 file-rec -Id 3   # solver follow-up triage -> GH issue
+# --- hub findings (problems with the hub's OWN prompts/config/scripts/memory/env) ---
+.\review-coverage.ps1 hubfind -Worktree <folder|orchestrator> -Category <env|tool|prompt|config|memory|other> -Title '..' -Detail '..' [-Severity ..]   # log one (any worktree or the orchestrator)
+.\review-coverage.ps1 hub-findings [-All]                    # triage list (open by default)
+.\review-coverage.ps1 hub-resolve -Id 4 -Target <prompt|config|script|memory> -Note '<what changed>'   # close after editing the real artifact (or -Dismiss)
 # --- issue lane (ALL GH issues -> ledger -> review -> approve -> overlap-aware deploy) ---
 .\review-coverage.ps1 issue sync                             # pull every OPEN GH issue into the ledger (origin: user|recon|recommendation)
 .\review-coverage.ps1 issue unreviewed                       # the review QUEUE (synced, not yet reviewed) -> drives the fan-out
@@ -591,7 +597,11 @@ Steps when merging a finished PR:
 4. **Sweep the standing follow-up backlog so it can't rot (verify-before-stale).** Don't stop at the just-merged
    worktree's own recommendations — at each close, also glance at the WHOLE pending backlog and keep it fresh:
    `.\review-coverage.ps1 findings -Unverified` (recon findings not yet verified) + `.\review-coverage.ps1
-   recommendations` (proposed solver follow-ups, `-N` high enough to see them all — the default is 8).
+   recommendations` (proposed solver follow-ups, `-N` high enough to see them all — the default is 8) +
+   `.\review-coverage.ps1 hub-findings` (open problems with the hub's own prompts/config/scripts/env).
+   For each open hub finding, fix the real artifact — edit `WORKTREE.md`/`CLAUDE.md`/`hub.config.json`/the
+   helper script, or write a memory file — then `hub-resolve -Id <n> -Target <prompt|config|script|memory>
+   -Note '<what changed>'` (or `-Dismiss`).
    **Verify anything that has gone unreviewed against the CURRENT code now** — `verify -Id <n> -Verdict
    <still-valid|already-fixed|partially-fixed|out-of-scope> -Severity .. -Note ..` for a finding (same fields on a
    rec). Follow-ups go stale FAST: every merge silently fixes or moots some of them, so a batch left even a few
