@@ -1,6 +1,6 @@
 # claude-worktree-hub — Multi-Agent Worktree Hub
 
-> **New here? See `README.md`, then run `.\init-hub.ps1`.**
+> **New here? See `README.md`, then run `.\setup-hub.ps1` (idempotent first-run setup). Check readiness with `.\hub-doctor.ps1`.**
 
 > **This directory (the hub root) is an orchestration HUB, not a working copy.**
 > It holds a colocated **bare** git repository plus one isolated worktree per task.
@@ -15,7 +15,7 @@
 
 ## Repository
 
-All repo-specific values come from `hub.config.json` (git-ignored; copied from `hub.config.example.json` during `.\init-hub.ps1`).
+All repo-specific values come from `hub.config.json` (git-ignored; generated from `hub.config.example.json` during `.\setup-hub.ps1`, which calls `.\init-hub.ps1`).
 
 | | |
 |---|---|
@@ -42,6 +42,9 @@ All repo-specific values come from `hub.config.json` (git-ignored; copied from `
 ├── hub-config.ps1           <- config loader: sets $Hub + $HubConfig, exposes Get-LaunchFlags
 ├── claude-launch.ps1        <- bundled session wrapper (delegates to personal tab-color hook if present)
 ├── init-hub.ps1             <- bootstrap: bare clone + .git pointer + base worktree + config gen
+├── setup-hub.ps1            <- interactive first-run wizard (bootstrap + config + ledger + env + prereqs)
+├── hub-doctor.ps1           <- non-interactive readiness report (exit 0 ready / 1 blockers)
+├── hub-checks.ps1           <- shared readiness-check library (single source of truth for "ready")
 ├── new-worktree.ps1         <- helper: provision a worktree (use -Issue <N> for issue work)
 ├── remove-worktree.ps1      <- helper: tear a worktree down (worktree + branch only; leaves window + folder)
 ├── retire-worktree.ps1      <- helper: FULLY retire finished worktree(s) (kill terminal + remove + rm -rf + branch + prune)
@@ -124,7 +127,7 @@ before they become noise in the issue tracker. Verification is itself a read-onl
 fan-out (one subagent per finding); it writes only verdicts/links to the ledger, never code or GitHub.
 
 ```powershell
-.\review-coverage.ps1 init ; .\review-coverage.ps1 seed     # one-time: schema + scan repo -> topics
+.\review-coverage.ps1 init ; .\review-coverage.ps1 seed     # one-time: schema + scan repo -> topics  (setup-hub.ps1 runs these automatically)
 .\review-coverage.ps1 due  -N 8                              # what's due now (priority x staleness)
 .\review-coverage.ps1 run  -N 3                              # launch recon for the top-3 due topics
 .\review-coverage.ps1 report                                 # coverage %, oldest unreviewed, by area

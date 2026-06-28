@@ -75,8 +75,8 @@ Step "Generating hub.config.json" {
 }
 
 Write-Host ""
-Write-Host "Hub ready for $Repo." -ForegroundColor Green
-Write-Host "Next:" -ForegroundColor Green
-Write-Host "  1. Review hub.config.json (set installCmd/verifyCmd/testCmd + database.* if needed)." -ForegroundColor Green
-Write-Host "  2. Put real secrets in $BaseWorktree\.env (copied into new worktrees)." -ForegroundColor Green
-Write-Host "  3. Create a task worktree:  .\new-worktree.ps1 -Issue <N> -Install" -ForegroundColor Green
+Write-Host "Hub bootstrapped for $Repo." -ForegroundColor Green
+Write-Host "Finish setup (idempotent - does config, ledger, env scaffold, prereq checks):" -ForegroundColor Green
+Write-Host "  .\setup-hub.ps1" -ForegroundColor Green
+Write-Host "Check readiness anytime:" -ForegroundColor Green
+Write-Host "  .\hub-doctor.ps1" -ForegroundColor Green
