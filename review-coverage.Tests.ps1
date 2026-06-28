@@ -91,3 +91,13 @@ Describe 'hub-findings' {
         $all | Should -Match 'to dismiss'
     }
 }
+
+Describe 'monitor shows hub findings' {
+    It 'includes the open hub-findings section and an open title' {
+        $db = New-TempDb
+        & $script:rc hubfind -DbPath $db -Worktree 'w' -Category env -Title 'pwsh-not-bash' | Out-Null
+        $out = (& $script:rc monitor -DbPath $db) -join "`n"
+        $out | Should -Match 'Open hub findings'
+        $out | Should -Match 'pwsh-not-bash'
+    }
+}
