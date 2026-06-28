@@ -38,6 +38,12 @@ Invoke-Pester -Path .\review-coverage.Tests.ps1 -Output Detailed
 
 Lets `review-coverage.ps1` run its local-SQLite verbs without `hub.config.json`, and adds the `-Db` (test/override ledger path) and `-Target` (hub-resolve destination) params. Config-dependent verbs still error clearly.
 
+> **Implementation note (deviation applied during build):** `-Db` was renamed to **`-DbPath`**. Under
+> `[CmdletBinding()]`, a `-Db` parameter collides with the auto-added `-Debug` common parameter's `db`
+> alias (PowerShell raises a `MetadataException` at bind time). Wherever a step below shows `-Db <path>`,
+> the built code and the Pester tests use `-DbPath <path>` instead. This param is test/override-only, so
+> no user-facing doc references it.
+
 **Files:**
 - Modify: `review-coverage.ps1:47-55` (param block tail + config load)
 - Create: `review-coverage.Tests.ps1`
