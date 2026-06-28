@@ -396,9 +396,9 @@ if ($outDir -and -not (Test-Path $outDir)) { New-Item -ItemType Directory -Force
 
 # quick counts for the console summary
 function Count-Rows([string]$json) { if ($json -eq '[]') { 0 } else { @($json | ConvertFrom-Json).Count } }
-$ci = Count-Rows $qIssues; $cf = Count-Rows $qFindings; $cr = Count-Rows $qRecs; $cw = Count-Rows $qWorktrees
+$ci = Count-Rows $qIssues; $cf = Count-Rows $qFindings; $cr = Count-Rows $qRecs; $ch = Count-Rows $qHubFindings; $cw = Count-Rows $qWorktrees
 Write-Host ("wrote {0}" -f $Out) -ForegroundColor Green
-Write-Host ("  issues {0} · findings {1} · recommendations {2} · worktrees {3}" -f $ci, $cf, $cr, $cw) -ForegroundColor DarkGray
+Write-Host ("  issues {0} · findings {1} · recommendations {2} · hub-findings {3} · worktrees {4}" -f $ci, $cf, $cr, $ch, $cw) -ForegroundColor DarkGray
 
 # --- open in Chrome -------------------------------------------------------------------
 if ($NoOpen) { return }
