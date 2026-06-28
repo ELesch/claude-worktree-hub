@@ -78,12 +78,14 @@ function Test-GhCredentialHelper {
 
 function Test-BareRepo {
     param([Parameter(Mandatory)][string]$HubRoot)
+    if (-not (Test-OnPath -Name 'git')) { return $false }   # a missing tool throws under Stop
     $r = (& git -C (Join-Path $HubRoot '.bare') rev-parse --is-bare-repository 2>$null)
     return ($r -eq 'true')
 }
 
 function Test-HubGitConfig {
     param([Parameter(Mandatory)][string]$HubRoot)
+    if (-not (Test-OnPath -Name 'git')) { return $false }
     $fetch = (& git -C $HubRoot config --get-all remote.origin.fetch 2>$null)
     $gc = (& git -C $HubRoot config --get gc.auto 2>$null)
     return (($fetch -match '\+refs/heads/\*') -and ($gc -eq '0'))
@@ -91,6 +93,7 @@ function Test-HubGitConfig {
 
 function Test-BaseWorktree {
     param([Parameter(Mandatory)][string]$HubRoot, $Config)
+    if (-not (Test-OnPath -Name 'git')) { return $false }
     $base = if ($Config -and $Config.baseWorktree) { $Config.baseWorktree } else { 'main' }
     $wt = Join-Path $HubRoot $base
     if (-not (Test-Path $wt)) { return $false }
@@ -100,14 +103,16 @@ function Test-BaseWorktree {
 
 function Test-LedgerSchema {
     param([Parameter(Mandatory)][string]$HubRoot)
+    if (-not (Test-OnPath -Name 'sqlite3')) { return $false }
     $db = Join-Path $HubRoot '.review\coverage.db'
     if (-not (Test-Path $db)) { return $false }
     $n = (& sqlite3 $db "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('topic','issue','finding','worktree');" 2>$null)
-    return ($n -eq '4')
+    return ([int]$n -eq 4)
 }
 
 function Test-LedgerSeeded {
     param([Parameter(Mandatory)][string]$HubRoot)
+    if (-not (Test-OnPath -Name 'sqlite3')) { return $false }
     $db = Join-Path $HubRoot '.review\coverage.db'
     if (-not (Test-Path $db)) { return $false }
     $n = (& sqlite3 $db "SELECT count(*) FROM topic;" 2>$null)

@@ -198,3 +198,37 @@ Describe 'Get-HubReadiness' {
         }
     }
 }
+
+Describe 'external-tool probe guards' {
+    # Regression: hub-doctor.ps1 / setup-hub.ps1 call Get-HubReadiness under
+    # $ErrorActionPreference='Stop' with no try/catch. A genuinely MISSING tool
+    # makes `& <tool>` throw CommandNotFoundException (2>$null does NOT suppress it).
+    # Each tool-dependent probe must short-circuit through Test-OnPath and return $false.
+    BeforeAll {
+        Mock Test-OnPath { $false }   # every external tool reported absent
+    }
+    It 'Get-HubReadiness does not throw under Stop with all tools absent and a $null config' {
+        $ErrorActionPreference = 'Stop'
+        { Get-HubReadiness -Config $null -HubRoot $TestDrive } | Should -Not -Throw
+    }
+    It 'Test-LedgerSchema short-circuits through Test-OnPath (no sqlite3 shell-out)' {
+        Test-LedgerSchema -HubRoot $TestDrive | Should -BeFalse
+        Should -Invoke Test-OnPath -ParameterFilter { $Name -eq 'sqlite3' }
+    }
+    It 'Test-LedgerSeeded short-circuits through Test-OnPath (no sqlite3 shell-out)' {
+        Test-LedgerSeeded -HubRoot $TestDrive | Should -BeFalse
+        Should -Invoke Test-OnPath -ParameterFilter { $Name -eq 'sqlite3' }
+    }
+    It 'Test-BareRepo short-circuits through Test-OnPath (no git shell-out)' {
+        Test-BareRepo -HubRoot $TestDrive | Should -BeFalse
+        Should -Invoke Test-OnPath -ParameterFilter { $Name -eq 'git' }
+    }
+    It 'Test-HubGitConfig short-circuits through Test-OnPath (no git shell-out)' {
+        Test-HubGitConfig -HubRoot $TestDrive | Should -BeFalse
+        Should -Invoke Test-OnPath -ParameterFilter { $Name -eq 'git' }
+    }
+    It 'Test-BaseWorktree short-circuits through Test-OnPath (no git shell-out)' {
+        Test-BaseWorktree -HubRoot $TestDrive -Config $null | Should -BeFalse
+        Should -Invoke Test-OnPath -ParameterFilter { $Name -eq 'git' }
+    }
+}
