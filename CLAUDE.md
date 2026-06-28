@@ -1,6 +1,6 @@
 # claude-worktree-hub — Multi-Agent Worktree Hub
 
-> **New here? See `README.md`, then run `.\init-hub.ps1`.**
+> **New here? See `README.md`, then run `.\setup-hub.ps1` (idempotent first-run setup). Check readiness with `.\hub-doctor.ps1`.**
 
 > **This directory (the hub root) is an orchestration HUB, not a working copy.**
 > It holds a colocated **bare** git repository plus one isolated worktree per task.
@@ -42,6 +42,9 @@ All repo-specific values come from `hub.config.json` (git-ignored; copied from `
 ├── hub-config.ps1           <- config loader: sets $Hub + $HubConfig, exposes Get-LaunchFlags
 ├── claude-launch.ps1        <- bundled session wrapper (delegates to personal tab-color hook if present)
 ├── init-hub.ps1             <- bootstrap: bare clone + .git pointer + base worktree + config gen
+├── setup-hub.ps1            <- interactive first-run wizard (bootstrap + config + ledger + env + prereqs)
+├── hub-doctor.ps1           <- non-interactive readiness report (exit 0 ready / 1 blockers)
+├── hub-checks.ps1           <- shared readiness-check library (single source of truth for "ready")
 ├── new-worktree.ps1         <- helper: provision a worktree (use -Issue <N> for issue work)
 ├── remove-worktree.ps1      <- helper: tear a worktree down (worktree + branch only; leaves window + folder)
 ├── retire-worktree.ps1      <- helper: FULLY retire finished worktree(s) (kill terminal + remove + rm -rf + branch + prune)
