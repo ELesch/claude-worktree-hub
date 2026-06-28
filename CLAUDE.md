@@ -15,7 +15,7 @@
 
 ## Repository
 
-All repo-specific values come from `hub.config.json` (git-ignored; copied from `hub.config.example.json` during `.\init-hub.ps1`).
+All repo-specific values come from `hub.config.json` (git-ignored; generated from `hub.config.example.json` during `.\setup-hub.ps1`, which calls `.\init-hub.ps1`).
 
 | | |
 |---|---|
@@ -127,7 +127,7 @@ before they become noise in the issue tracker. Verification is itself a read-onl
 fan-out (one subagent per finding); it writes only verdicts/links to the ledger, never code or GitHub.
 
 ```powershell
-.\review-coverage.ps1 init ; .\review-coverage.ps1 seed     # one-time: schema + scan repo -> topics
+.\review-coverage.ps1 init ; .\review-coverage.ps1 seed     # one-time: schema + scan repo -> topics  (setup-hub.ps1 runs these automatically)
 .\review-coverage.ps1 due  -N 8                              # what's due now (priority x staleness)
 .\review-coverage.ps1 run  -N 3                              # launch recon for the top-3 due topics
 .\review-coverage.ps1 report                                 # coverage %, oldest unreviewed, by area
