@@ -37,9 +37,13 @@ foreach ($f in @('SPEC.md', 'PLAN.md')) {
     if (-not (Test-Path (Join-Path $wtPath $f))) { throw "Missing $f in '$Worktree' - write & commit the plan before handing off." }
 }
 $dirty = ((& git -C $wtPath status --porcelain) | Out-String).Trim()
+# Native git failures don't trip 'Stop'; an unchecked failure here leaves $dirty='' and SILENTLY bypasses
+# the uncommitted-changes guard, handing off on an invalid/dirty worktree.
+if ($LASTEXITCODE -ne 0) { throw "git status failed in '$Worktree' (exit $LASTEXITCODE) - is this a valid git worktree?" }
 if ($dirty) { throw "Worktree '$Worktree' has uncommitted changes - commit SPEC.md/PLAN.md and your baseline before handoff (the executor reads the committed plan)." }
 
 $branch = (& git -C $wtPath rev-parse --abbrev-ref HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw "git rev-parse failed in '$Worktree' (exit $LASTEXITCODE) - cannot determine the branch to hand off." }
 if (-not $Title) { $Title = "$Worktree exec" }
 $launchersDir = Join-Path $Hub '.launchers'
 if (-not (Test-Path $launchersDir)) { New-Item -ItemType Directory -Force -Path $launchersDir | Out-Null }

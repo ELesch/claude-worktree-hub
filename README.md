@@ -136,7 +136,7 @@ All hub-specific values live in `hub.config.json` (git-ignored; generated from `
 | `verifyCmd` | string | `"pnpm run verify"` | Command agents run to validate before opening a PR (typecheck + lint) |
 | `testCmd` | string | `"pnpm test"` | Command to run the test suite |
 | `envFiles` | string[] | `[".env", ".env.test", ".env.local"]` | List of env files copied from `baseWorktree\` into each new worktree |
-| `launch.permissionMode` | string | `"auto"` | Claude permission mode: `"auto"` (classifier-gated) or `"bypass"` (skip all prompts); controls the `--permission-mode` / `--dangerously-skip-permissions` flag |
+| `launch.permissionMode` | string | `"auto"` | Claude permission mode applied to **every** session this hub launches (solver, recon, executor, child). `"auto"` (classifier-gated — **recommended**: soft-denies the dangerous edge like prod deploys, DB migrations, force-push, push-to-default, `rm -rf`) → `--permission-mode auto`. `"bypass"` → `--dangerously-skip-permissions`, which disables **all** prompts for these unattended autonomous agents — **not recommended**; use only for a manual interactive session, if at all. See "Why `--permission-mode auto`" in CLAUDE.md. |
 | `launch.effort` | string | `"max"` | Claude effort level passed as `--effort <value>` to every session |
 | `launch.tabColor` | boolean | `true` | Whether `claude-launch.ps1` delegates to your personal `claude-color.ps1` hook for Windows Terminal tab coloring |
 | `complexPromptPreamble` | string | `"/superpowers:using-superpowers"` | Text prepended to gated-workflow seed prompts; set to `""` to disable (omit if you don't use the superpowers plugin) |
