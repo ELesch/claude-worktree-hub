@@ -66,3 +66,18 @@ Describe 'Get-PackageManagerFromLockfile' {
         Get-PackageManagerFromLockfile -WorktreePath $d | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Test-ConfigPlaceholder' {
+    It 'is true when config is $null' {
+        Test-ConfigPlaceholder -Config $null | Should -BeTrue
+    }
+    It 'is true when repo is missing' {
+        Test-ConfigPlaceholder -Config ([pscustomobject]@{ defaultBranch = 'main' }) | Should -BeTrue
+    }
+    It 'is true when repo is the owner/repo placeholder' {
+        Test-ConfigPlaceholder -Config ([pscustomobject]@{ repo = 'owner/repo' }) | Should -BeTrue
+    }
+    It 'is false for a real repo slug' {
+        Test-ConfigPlaceholder -Config ([pscustomobject]@{ repo = 'acme/widgets' }) | Should -BeFalse
+    }
+}

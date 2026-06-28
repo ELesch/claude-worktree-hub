@@ -27,6 +27,12 @@ function Get-ReadinessVerdict {
     [pscustomobject]@{ Ready = ($blockers.Count -eq 0); Blockers = $blockers; Warnings = $warnings }
 }
 
+function Test-ConfigPlaceholder {
+    param($Config)
+    if (-not $Config -or -not $Config.repo) { return $true }
+    return ($Config.repo -eq 'owner/repo')
+}
+
 function Get-PackageManagerFromLockfile {
     param([Parameter(Mandatory)][string]$WorktreePath)
     # Ordered so pnpm wins if multiple lockfiles coexist (matches the repo's pnpm default).
