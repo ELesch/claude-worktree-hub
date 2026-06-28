@@ -376,6 +376,25 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
         Write-Host "hub finding recorded: $Title" -ForegroundColor Green
     }
 
+    'hub-findings' {
+        $where = if ($All) { '1=1' } else { "status='open'" }
+        Query "SELECT id, source, category AS cat, severity AS sev, status, COALESCE(target,'') AS target, substr(title,1,55) AS title FROM hubfinding WHERE $where ORDER BY CASE severity WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, id LIMIT $N;"
+    }
+
+    'hub-resolve' {
+        if (-not $Id) { throw "hub-resolve requires -Id <hub finding id>" }
+        if ($Dismiss) {
+            Exec "UPDATE hubfinding SET status='dismissed', resolution='$(q $Note)', resolved_at=datetime('now') WHERE id=$Id;"
+            Write-Host "hub finding #$Id dismissed." -ForegroundColor Yellow
+        }
+        else {
+            if (-not $Target) { throw "hub-resolve requires -Target <prompt|config|script|memory> (or use -Dismiss)" }
+            Exec "UPDATE hubfinding SET status='resolved', target='$(q $Target)', resolution='$(q $Note)', resolved_at=datetime('now') WHERE id=$Id;"
+            Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('orchestrator','hub','hub-resolve','#$Id -> $(q $Target)');"
+            Write-Host "hub finding #$Id resolved (fixed in $Target)." -ForegroundColor Green
+        }
+    }
+
     # ---- issue lane: GH issue -> ledger -> review (orchestrator subagent fan-out) -> approve -> overlap-aware deploy ----
 
     'issue' {

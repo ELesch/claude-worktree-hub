@@ -52,3 +52,42 @@ Describe 'hubfind' {
         { & $script:rc hubfind -DbPath $db -Worktree 'w' -Category env } | Should -Throw
     }
 }
+
+Describe 'hub-resolve' {
+    It 'stamps resolved with target, note, and resolved_at' {
+        $db = New-TempDb
+        & $script:rc hubfind -DbPath $db -Worktree 'w' -Category config -Title 'wrong pm' | Out-Null
+        & $script:rc hub-resolve -DbPath $db -Id 1 -Target config -Note 'set packageManager=npm' | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT status,target,resolution,(resolved_at IS NOT NULL) FROM hubfinding WHERE id=1;") |
+            Should -Be 'resolved|config|set packageManager=npm|1'
+    }
+    It 'marks dismissed without requiring -Target' {
+        $db = New-TempDb
+        & $script:rc hubfind -DbPath $db -Worktree 'w' -Category other -Title 'noise' | Out-Null
+        & $script:rc hub-resolve -DbPath $db -Id 1 -Dismiss -Note 'not a real problem' | Out-Null
+        (& sqlite3 $db "SELECT status FROM hubfinding WHERE id=1;") | Should -Be 'dismissed'
+    }
+    It 'throws when neither -Target nor -Dismiss is given' {
+        $db = New-TempDb
+        & $script:rc hubfind -DbPath $db -Worktree 'w' -Category env -Title 'x' | Out-Null
+        { & $script:rc hub-resolve -DbPath $db -Id 1 } | Should -Throw
+    }
+    It 'throws when -Id is missing' {
+        $db = New-TempDb
+        { & $script:rc hub-resolve -DbPath $db -Target prompt } | Should -Throw
+    }
+}
+
+Describe 'hub-findings' {
+    It 'lists only open by default and includes resolved/dismissed with -All' {
+        $db = New-TempDb
+        & $script:rc hubfind -DbPath $db -Worktree 'w' -Category env -Title 'open one' | Out-Null
+        & $script:rc hubfind -DbPath $db -Worktree 'w' -Category env -Title 'to dismiss' | Out-Null
+        & $script:rc hub-resolve -DbPath $db -Id 2 -Dismiss | Out-Null
+        $open = (& $script:rc hub-findings -DbPath $db) -join "`n"
+        $open | Should -Match 'open one'
+        $open | Should -Not -Match 'to dismiss'
+        $all = (& $script:rc hub-findings -DbPath $db -All) -join "`n"
+        $all | Should -Match 'to dismiss'
+    }
+}
