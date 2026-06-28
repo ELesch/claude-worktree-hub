@@ -26,3 +26,18 @@ function Get-ReadinessVerdict {
     $warnings = @($Results | Where-Object { $_.Status -eq 'warn' } | ForEach-Object { $_.Name })
     [pscustomobject]@{ Ready = ($blockers.Count -eq 0); Blockers = $blockers; Warnings = $warnings }
 }
+
+function Get-PackageManagerFromLockfile {
+    param([Parameter(Mandatory)][string]$WorktreePath)
+    # Ordered so pnpm wins if multiple lockfiles coexist (matches the repo's pnpm default).
+    $map = [ordered]@{
+        'pnpm-lock.yaml'    = 'pnpm'
+        'package-lock.json' = 'npm'
+        'yarn.lock'         = 'yarn'
+        'bun.lockb'         = 'bun'
+    }
+    foreach ($file in $map.Keys) {
+        if (Test-Path (Join-Path $WorktreePath $file)) { return $map[$file] }
+    }
+    return $null
+}

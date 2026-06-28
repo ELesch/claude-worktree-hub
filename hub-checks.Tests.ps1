@@ -40,3 +40,29 @@ Describe 'Get-ReadinessVerdict' {
         (Get-ReadinessVerdict -Results @()).Ready | Should -BeTrue
     }
 }
+
+Describe 'Get-PackageManagerFromLockfile' {
+    It 'returns pnpm for pnpm-lock.yaml' {
+        New-Item -ItemType File -Path (Join-Path $TestDrive 'pnpm-lock.yaml') | Out-Null
+        Get-PackageManagerFromLockfile -WorktreePath $TestDrive | Should -Be 'pnpm'
+    }
+    It 'returns npm for package-lock.json' {
+        $d = Join-Path $TestDrive 'npmproj'; New-Item -ItemType Directory -Path $d | Out-Null
+        New-Item -ItemType File -Path (Join-Path $d 'package-lock.json') | Out-Null
+        Get-PackageManagerFromLockfile -WorktreePath $d | Should -Be 'npm'
+    }
+    It 'returns yarn for yarn.lock' {
+        $d = Join-Path $TestDrive 'yarnproj'; New-Item -ItemType Directory -Path $d | Out-Null
+        New-Item -ItemType File -Path (Join-Path $d 'yarn.lock') | Out-Null
+        Get-PackageManagerFromLockfile -WorktreePath $d | Should -Be 'yarn'
+    }
+    It 'returns bun for bun.lockb' {
+        $d = Join-Path $TestDrive 'bunproj'; New-Item -ItemType Directory -Path $d | Out-Null
+        New-Item -ItemType File -Path (Join-Path $d 'bun.lockb') | Out-Null
+        Get-PackageManagerFromLockfile -WorktreePath $d | Should -Be 'bun'
+    }
+    It 'returns $null when no lockfile is present' {
+        $d = Join-Path $TestDrive 'empty'; New-Item -ItemType Directory -Path $d | Out-Null
+        Get-PackageManagerFromLockfile -WorktreePath $d | Should -BeNullOrEmpty
+    }
+}
