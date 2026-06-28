@@ -57,3 +57,67 @@ function Get-PackageManagerFromLockfile {
     }
     return $null
 }
+
+# --- thin probe wrappers (mock these in tests; they isolate all side effects) ---
+
+function Test-OnPath {
+    param([Parameter(Mandatory)][string]$Name)
+    [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Test-GhAuth {
+    & gh auth status *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Test-GhCredentialHelper {
+    # gh auth setup-git writes a credential.<host>.helper that invokes gh. Best-effort detection.
+    $cfg = (& git config --get-regexp '^credential.*\.helper$' 2>$null)
+    return [bool]($cfg -match 'gh')
+}
+
+function Test-BareRepo {
+    param([Parameter(Mandatory)][string]$HubRoot)
+    $r = (& git -C (Join-Path $HubRoot '.bare') rev-parse --is-bare-repository 2>$null)
+    return ($r -eq 'true')
+}
+
+function Test-HubGitConfig {
+    param([Parameter(Mandatory)][string]$HubRoot)
+    $fetch = (& git -C $HubRoot config --get-all remote.origin.fetch 2>$null)
+    $gc = (& git -C $HubRoot config --get gc.auto 2>$null)
+    return (($fetch -match '\+refs/heads/\*') -and ($gc -eq '0'))
+}
+
+function Test-BaseWorktree {
+    param([Parameter(Mandatory)][string]$HubRoot, $Config)
+    $base = if ($Config -and $Config.baseWorktree) { $Config.baseWorktree } else { 'main' }
+    $wt = Join-Path $HubRoot $base
+    if (-not (Test-Path $wt)) { return $false }
+    $up = (& git -C $wt rev-parse --abbrev-ref '@{upstream}' 2>$null)
+    return [bool](($LASTEXITCODE -eq 0) -and $up)
+}
+
+function Test-LedgerSchema {
+    param([Parameter(Mandatory)][string]$HubRoot)
+    $db = Join-Path $HubRoot '.review\coverage.db'
+    if (-not (Test-Path $db)) { return $false }
+    $n = (& sqlite3 $db "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('topic','issue','finding','worktree');" 2>$null)
+    return ($n -eq '4')
+}
+
+function Test-LedgerSeeded {
+    param([Parameter(Mandatory)][string]$HubRoot)
+    $db = Join-Path $HubRoot '.review\coverage.db'
+    if (-not (Test-Path $db)) { return $false }
+    $n = (& sqlite3 $db "SELECT count(*) FROM topic;" 2>$null)
+    return ([int]$n -gt 0)
+}
+
+function Get-MissingEnvFiles {
+    param([Parameter(Mandatory)][string]$HubRoot, $Config)
+    $base = if ($Config -and $Config.baseWorktree) { $Config.baseWorktree } else { 'main' }
+    $files = if ($Config -and $Config.envFiles) { $Config.envFiles } else { @('.env') }
+    $baseDir = Join-Path $HubRoot $base
+    return @($files | Where-Object { -not (Test-Path (Join-Path $baseDir $_)) })
+}

@@ -106,3 +106,12 @@ Describe 'Test-GitPointer' {
         Test-GitPointer -Path (Join-Path $TestDrive 'missing.git') | Should -BeFalse
     }
 }
+
+Describe 'Test-OnPath' {
+    It 'is true for a command that exists (git)' {
+        Test-OnPath -Name 'git' | Should -BeTrue
+    }
+    It 'is false for a command that does not exist' {
+        Test-OnPath -Name 'definitely-not-a-real-command-xyz' | Should -BeFalse
+    }
+}
