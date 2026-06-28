@@ -10,6 +10,7 @@
     * Issues          — review_status != 'closed'  (synced / reviewed / approved)
     * Findings        — status NOT IN ('completed','dismissed')  (proposed / filed)
     * Recommendations — status = 'proposed'  (out-of-scope solver follow-ups)
+    * Hub findings    — status = 'open'  (problems with the hub's own prompts/config/scripts/env)
     * Worktrees       — status != 'retired'  (the live monitor view)
 
   The page has a global search box, per-column sorting, severity/status colour badges,
@@ -40,9 +41,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'hub-config.ps1')   # sets $Hub + $HubConfig
+try { . (Join-Path $PSScriptRoot 'hub-config.ps1') }   # sets $Hub + $HubConfig
+catch { $Hub = $PSScriptRoot; $HubConfig = $null }
 
-if (-not $Repo) { $Repo = $HubConfig.repo }
+if (-not $Repo) { $Repo = if ($HubConfig) { $HubConfig.repo } else { 'owner/repo' } }
 $Db = if ($Database) { $Database } else { Join-Path $Hub '.review\coverage.db' }
 if (-not $Out) { $Out = Join-Path $Hub '.review\ledger-open-items.html' }
 
@@ -97,6 +99,16 @@ ORDER BY CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' T
   id;
 "@
 
+$qHubFindings = Get-Json @"
+SELECT id, COALESCE(source,'') AS source, COALESCE(category,'') AS category,
+  COALESCE(severity,'') AS severity, title, COALESCE(detail,'') AS detail,
+  substr(COALESCE(created_at,''),1,10) AS created
+FROM hubfinding
+WHERE status='open'
+ORDER BY CASE severity WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 WHEN 'Low' THEN 2 ELSE 3 END,
+  id;
+"@
+
 $qWorktrees = Get-Json @"
 SELECT name, wtype AS type, COALESCE(issue,'') AS issue, COALESCE(pr,'') AS pr, status,
   CAST((julianday('now')-julianday(updated_at))*1440 AS INT) AS upd_min,
@@ -115,6 +127,7 @@ $dataJson = "{`n" + (@(
         '"issues": ' + $qIssues
         '"findings": ' + $qFindings
         '"recommendations": ' + $qRecs
+        '"hubFindings": ' + $qHubFindings
         '"worktrees": ' + $qWorktrees
     ) -join ",`n") + "`n}"
 # never let a stray </script> in evidence/detail text break the <script> block
@@ -249,6 +262,15 @@ const SECTIONS = [
     {k:'title',label:'Title',type:'title'},
     {k:'detail',label:'Detail',type:'long'},
     {k:'worktree',label:'Worktree'},
+    {k:'created',label:'Created'},
+  ]},
+  { id:'hubFindings', title:'Hub findings', desc:'prompt / env / config problems (open)', rows:DATA.hubFindings, cols:[
+    {k:'id',label:'ID',type:'num'},
+    {k:'source',label:'Source'},
+    {k:'category',label:'Category'},
+    {k:'severity',label:'Sev',type:'severity'},
+    {k:'title',label:'Title',type:'title'},
+    {k:'detail',label:'Detail',type:'long'},
     {k:'created',label:'Created'},
   ]},
   { id:'worktrees', title:'Worktrees', desc:'status ≠ retired (live monitor)', rows:DATA.worktrees, cols:[

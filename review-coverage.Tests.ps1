@@ -101,3 +101,16 @@ Describe 'monitor shows hub findings' {
         $out | Should -Match 'pwsh-not-bash'
     }
 }
+
+Describe 'ledger-to-html includes hub findings' {
+    It 'renders a Hub findings section with an open finding (no hub.config.json needed)' {
+        $db = New-TempDb
+        & $script:rc hubfind -DbPath $db -Worktree 'w' -Category prompt -Title 'stale rule about pnpm' | Out-Null
+        $html = Join-Path $TestDrive 'ledger.html'
+        $renderer = $script:rc.Replace('review-coverage.ps1', 'ledger-to-html.ps1')
+        & $renderer -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
+        $text = Get-Content $html -Raw
+        $text | Should -Match 'Hub findings'
+        $text | Should -Match 'stale rule about pnpm'
+    }
+}
