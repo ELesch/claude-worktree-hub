@@ -121,3 +121,122 @@ function Get-MissingEnvFiles {
     $baseDir = Join-Path $HubRoot $base
     return @($files | Where-Object { -not (Test-Path (Join-Path $baseDir $_)) })
 }
+
+function Get-HubReadiness {
+    <# Assemble the ordered list of all readiness checks. $Config may be $null on an
+       un-bootstrapped hub - config-dependent checks degrade to 'fail', never throw. #>
+    param($Config, [Parameter(Mandatory)][string]$HubRoot)
+
+    $st = { param($ok, $good = 'ok', $bad = 'fail') if ($ok) { $good } else { $bad } }
+    $r = New-Object System.Collections.Generic.List[object]
+
+    # --- prerequisites ---
+    $r.Add( (New-CheckResult -Name 'PowerShell 7+' -Category prereq `
+                -Status (& $st ($PSVersionTable.PSVersion.Major -ge 7)) `
+                -Detail "detected $($PSVersionTable.PSVersion)" -Fix 'winget install Microsoft.PowerShell') )
+
+    $tools = @(
+        @{ n = 'git';     fix = 'Install Git for Windows' },
+        @{ n = 'gh';      fix = 'winget install GitHub.cli' },
+        @{ n = 'sqlite3'; fix = 'choco install sqlite  (or winget install SQLite.SQLite)' },
+        @{ n = 'bash';    fix = 'Install Git for Windows (provides Git Bash)' },
+        @{ n = 'claude';  fix = 'Install Claude Code (npm i -g @anthropic-ai/claude-code)' }
+    )
+    foreach ($t in $tools) {
+        $ok = Test-OnPath -Name $t.n
+        $r.Add( (New-CheckResult -Name "$($t.n) on PATH" -Category prereq `
+                    -Status (& $st $ok) -Detail $(if ($ok) { 'found' } else { 'not found' }) -Fix $t.fix) )
+    }
+
+    $authOk = (Test-OnPath -Name 'gh') -and (Test-GhAuth)
+    $r.Add( (New-CheckResult -Name 'gh authenticated' -Category prereq -Status (& $st $authOk) `
+                -Detail $(if ($authOk) { 'authenticated' } else { 'not authenticated' }) -Fix 'gh auth login') )
+
+    $credOk = (Test-OnPath -Name 'gh') -and (Test-GhCredentialHelper)
+    $r.Add( (New-CheckResult -Name 'gh git credential helper' -Category prereq -Status (& $st $credOk 'ok' 'warn') `
+                -Detail $(if ($credOk) { 'configured' } else { 'not detected' }) -Fix 'gh auth setup-git') )
+
+    $pm = if ($Config -and $Config.packageManager) { $Config.packageManager } else { 'pnpm' }
+    if ($pm -eq 'none') {
+        $r.Add( (New-CheckResult -Name 'package manager' -Category prereq -Status ok -Detail 'n/a (packageManager=none)') )
+    }
+    else {
+        $pmOk = Test-OnPath -Name $pm
+        $r.Add( (New-CheckResult -Name "package manager ($pm)" -Category prereq -Status (& $st $pmOk 'ok' 'warn') `
+                    -Detail $(if ($pmOk) { 'found' } else { 'not found' }) -Fix "Install $pm (e.g. corepack enable)") )
+    }
+
+    # --- hub artifacts ---
+    $bareOk = Test-BareRepo -HubRoot $HubRoot
+    $r.Add( (New-CheckResult -Name '.bare is a valid bare repo' -Category hub -Status (& $st $bareOk) `
+                -Detail $(if ($bareOk) { 'ok' } else { 'missing/invalid' }) -Fix '.\init-hub.ps1 -CloneUrl <url>') )
+
+    $ptrOk = Test-GitPointer -Path (Join-Path $HubRoot '.git')
+    $r.Add( (New-CheckResult -Name '.git pointer (BOM-free gitdir)' -Category hub -Status (& $st $ptrOk) `
+                -Detail $(if ($ptrOk) { 'ok' } else { 'missing/invalid/BOM' }) -Fix '.\init-hub.ps1 rewrites it') )
+
+    $cfgGitOk = Test-HubGitConfig -HubRoot $HubRoot
+    $r.Add( (New-CheckResult -Name 'fetch refspec + gc.auto=0' -Category hub -Status (& $st $cfgGitOk 'ok' 'warn') `
+                -Detail $(if ($cfgGitOk) { 'configured' } else { 'not configured' }) -Fix '.\init-hub.ps1') )
+
+    $baseOk = Test-BaseWorktree -HubRoot $HubRoot -Config $Config
+    $r.Add( (New-CheckResult -Name 'base worktree + upstream' -Category hub -Status (& $st $baseOk) `
+                -Detail $(if ($baseOk) { 'present + tracking' } else { 'missing/no upstream' }) -Fix '.\init-hub.ps1') )
+
+    # --- config ---
+    $cfgOk = ($null -ne $Config) -and -not (Test-ConfigPlaceholder -Config $Config)
+    $r.Add( (New-CheckResult -Name 'hub.config.json valid + repo set' -Category config -Status (& $st $cfgOk) `
+                -Detail $(if ($cfgOk) { "repo=$($Config.repo)" } else { 'missing or placeholder' }) `
+                -Fix 'Run setup-hub.ps1 (or edit hub.config.json: set "repo")') )
+
+    # config commands match the project - only meaningful when config + a Node project exist
+    if ($cfgOk) {
+        $baseDir = Join-Path $HubRoot $Config.baseWorktree
+        $detected = Get-PackageManagerFromLockfile -WorktreePath $baseDir
+        $hasNode = $detected -or (Test-Path (Join-Path $baseDir 'package.json'))
+        if (-not $hasNode) {
+            $r.Add( (New-CheckResult -Name 'config commands match project' -Category config -Status ok -Detail 'n/a (no lockfile/package.json)') )
+        }
+        else {
+            $match = (-not $detected) -or ($Config.packageManager -eq $detected)
+            $r.Add( (New-CheckResult -Name 'config commands match project' -Category config -Status (& $st $match 'ok' 'warn') `
+                        -Detail $(if ($match) { "packageManager=$($Config.packageManager)" } else { "config=$($Config.packageManager) but lockfile=$detected" }) `
+                        -Fix 'setup-hub.ps1 offers to update installCmd/verifyCmd/testCmd') )
+        }
+    }
+
+    # --- ledger ---
+    $schemaOk = Test-LedgerSchema -HubRoot $HubRoot
+    $r.Add( (New-CheckResult -Name 'ledger schema (coverage.db)' -Category ledger -Status (& $st $schemaOk) `
+                -Detail $(if ($schemaOk) { 'tables present' } else { 'missing/incomplete' }) -Fix '.\review-coverage.ps1 init') )
+
+    $seedOk = Test-LedgerSeeded -HubRoot $HubRoot
+    $r.Add( (New-CheckResult -Name 'ledger seeded (topics)' -Category ledger -Status (& $st $seedOk 'ok' 'warn') `
+                -Detail $(if ($seedOk) { 'topics present' } else { 'no topics' }) -Fix '.\review-coverage.ps1 seed') )
+
+    # --- env ---
+    $missingEnv = Get-MissingEnvFiles -HubRoot $HubRoot -Config $Config
+    $envOk = ($missingEnv.Count -eq 0)
+    $r.Add( (New-CheckResult -Name '.env scaffolded in base worktree' -Category env -Status (& $st $envOk 'ok' 'warn') `
+                -Detail $(if ($envOk) { 'present' } else { "missing: $($missingEnv -join ', ')" }) `
+                -Fix 'setup-hub.ps1 copies .example -> target; then fill in secrets') )
+
+    # --- rules ---
+    $wtRulesOk = Test-Path (Join-Path $HubRoot 'WORKTREE.md')
+    $r.Add( (New-CheckResult -Name 'WORKTREE.md present' -Category rules -Status (& $st $wtRulesOk) `
+                -Detail $(if ($wtRulesOk) { 'present' } else { 'missing' }) -Fix 'git checkout -- WORKTREE.md') )
+
+    # --- info (non-blocking) ---
+    $wtTerm = Test-OnPath -Name 'wt'
+    $r.Add( (New-CheckResult -Name 'Windows Terminal (tab coloring)' -Category info -Status (& $st $wtTerm 'ok' 'warn') `
+                -Detail $(if ($wtTerm) { 'found' } else { 'not found (optional)' }) -Fix 'Optional: install Windows Terminal') )
+
+    $preamble = if ($Config) { $Config.complexPromptPreamble } else { '' }
+    if ($preamble -match 'superpowers') {
+        $r.Add( (New-CheckResult -Name 'superpowers plugin (preamble)' -Category info -Status warn `
+                    -Detail 'complexPromptPreamble references superpowers' `
+                    -Fix 'Install the superpowers plugin, or set complexPromptPreamble to "" in hub.config.json') )
+    }
+
+    return $r.ToArray()
+}

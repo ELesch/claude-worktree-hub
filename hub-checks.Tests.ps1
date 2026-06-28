@@ -115,3 +115,86 @@ Describe 'Test-OnPath' {
         Test-OnPath -Name 'definitely-not-a-real-command-xyz' | Should -BeFalse
     }
 }
+
+Describe 'Get-HubReadiness' {
+    BeforeAll {
+        $script:goodConfig = [pscustomobject]@{
+            repo = 'acme/widgets'; baseWorktree = 'main'; defaultBranch = 'main'
+            packageManager = 'pnpm'; envFiles = @('.env')
+            complexPromptPreamble = ''
+        }
+    }
+
+    Context 'when everything is healthy' {
+        BeforeAll {
+            Mock Test-OnPath { $true }
+            Mock Test-GhAuth { $true }
+            Mock Test-GhCredentialHelper { $true }
+            Mock Test-BareRepo { $true }
+            Mock Test-HubGitConfig { $true }
+            Mock Test-BaseWorktree { $true }
+            Mock Test-GitPointer { $true }
+            Mock Test-LedgerSchema { $true }
+            Mock Test-LedgerSeeded { $true }
+            Mock Get-MissingEnvFiles { @() }
+            Mock Test-Path { $true }   # WORKTREE.md present
+            $script:results = Get-HubReadiness -Config $script:goodConfig -HubRoot 'TestDrive:\hub'
+        }
+        It 'returns one result per check with no blockers' {
+            (Get-ReadinessVerdict -Results $script:results).Ready | Should -BeTrue
+        }
+        It 'every result has the contract shape' {
+            foreach ($r in $script:results) {
+                $r.Status   | Should -BeIn @('ok', 'warn', 'fail')
+                $r.Category | Should -BeIn @('prereq', 'hub', 'config', 'ledger', 'env', 'rules', 'info')
+            }
+        }
+    }
+
+    Context 'when sqlite3 is missing' {
+        BeforeAll {
+            Mock Test-OnPath { $true }
+            Mock Test-OnPath { $false } -ParameterFilter { $Name -eq 'sqlite3' }
+            Mock Test-GhAuth { $true }
+            Mock Test-GhCredentialHelper { $true }
+            Mock Test-BareRepo { $true }
+            Mock Test-HubGitConfig { $true }
+            Mock Test-BaseWorktree { $true }
+            Mock Test-GitPointer { $true }
+            Mock Test-LedgerSchema { $true }
+            Mock Test-LedgerSeeded { $true }
+            Mock Get-MissingEnvFiles { @() }
+            Mock Test-Path { $true }
+            $script:results = Get-HubReadiness -Config $script:goodConfig -HubRoot 'TestDrive:\hub'
+        }
+        It 'reports NOT ready' {
+            (Get-ReadinessVerdict -Results $script:results).Ready | Should -BeFalse
+        }
+        It 'flags the sqlite3 check as fail' {
+            ($script:results | Where-Object { $_.Name -eq 'sqlite3 on PATH' }).Status | Should -Be 'fail'
+        }
+    }
+
+    Context 'when config is $null (un-bootstrapped)' {
+        BeforeAll {
+            Mock Test-OnPath { $true }
+            Mock Test-GhAuth { $true }
+            Mock Test-GhCredentialHelper { $true }
+            Mock Test-BareRepo { $false }
+            Mock Test-HubGitConfig { $false }
+            Mock Test-BaseWorktree { $false }
+            Mock Test-GitPointer { $false }
+            Mock Test-LedgerSchema { $false }
+            Mock Test-LedgerSeeded { $false }
+            Mock Get-MissingEnvFiles { @('.env') }
+            Mock Test-Path { $true }
+            $script:results = Get-HubReadiness -Config $null -HubRoot 'TestDrive:\hub'
+        }
+        It 'does not throw and reports NOT ready' {
+            (Get-ReadinessVerdict -Results $script:results).Ready | Should -BeFalse
+        }
+        It 'flags the config check as fail' {
+            ($script:results | Where-Object { $_.Name -eq 'hub.config.json valid + repo set' }).Status | Should -Be 'fail'
+        }
+    }
+}
