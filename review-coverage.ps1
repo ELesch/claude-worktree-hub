@@ -345,7 +345,7 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
 "@
         Write-Host "`n=== Proposed recommendations (out-of-scope follow-ups) ===" -ForegroundColor Cyan
         Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='proposed' ORDER BY id LIMIT $N;"
-        Write-Output "`n=== Open hub findings (prompt / env / config problems) ==="
+        Write-Host "`n=== Open hub findings (prompt / env / config problems) ===" -ForegroundColor Cyan
         Query "SELECT id, source, category AS cat, severity AS sev, substr(title,1,55) AS title FROM hubfinding WHERE status='open' ORDER BY CASE severity WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, id LIMIT $N;"
     }
 
