@@ -297,6 +297,45 @@ Describe 'Get-HubReadiness' {
             ($script:results6 | Where-Object { $_.Name -eq 'config commands match project' }).Detail | Should -Not -Match "'test'"
         }
     }
+
+    Context 'config-commands check does not mistake a direct runner for a pm script' {
+        BeforeAll {
+            $script:hub7 = Join-Path $TestDrive 'hub7'
+            $base7 = Join-Path $script:hub7 'main'
+            New-Item -ItemType Directory -Path $base7 -Force | Out-Null
+            '{ "scripts": { "build": "tsc" } }' | Set-Content -Path (Join-Path $base7 'package.json') -Encoding utf8
+            Mock Test-OnPath { $true }
+            Mock Test-GhAuth { $true }
+            Mock Test-GhCredentialHelper { $true }
+            Mock Test-BareRepo { $true }
+            Mock Test-HubGitConfig { $true }
+            Mock Test-BaseWorktree { $true }
+            Mock Test-GitPointer { $true }
+            Mock Test-LedgerSchema { $true }
+            Mock Test-LedgerSeeded { $true }
+            Mock Get-MissingEnvFiles { @() }
+            # testCmd is a DIRECT binary (leading token != packageManager) -> extract nothing, no warn.
+            $cfgT = [pscustomobject]@{
+                repo = 'acme/widgets'; baseWorktree = 'main'; defaultBranch = 'main'
+                packageManager = 'pnpm'; envFiles = @('.env'); complexPromptPreamble = ''
+                testCmd = 'vitest run'
+            }
+            # verifyCmd is a direct binary with flags -> must not capture '--coverage'.
+            $cfgV = [pscustomobject]@{
+                repo = 'acme/widgets'; baseWorktree = 'main'; defaultBranch = 'main'
+                packageManager = 'pnpm'; envFiles = @('.env'); complexPromptPreamble = ''
+                verifyCmd = 'vitest run --coverage'
+            }
+            $script:resT = Get-HubReadiness -Config $cfgT -HubRoot $script:hub7
+            $script:resV = Get-HubReadiness -Config $cfgV -HubRoot $script:hub7
+        }
+        It 'testCmd "vitest run" is not read as a missing "run" script' {
+            ($script:resT | Where-Object { $_.Name -eq 'config commands match project' }).Status | Should -Be 'ok'
+        }
+        It 'verifyCmd "vitest run --coverage" is not read as a missing "--coverage" script' {
+            ($script:resV | Where-Object { $_.Name -eq 'config commands match project' }).Status | Should -Be 'ok'
+        }
+    }
 }
 
 Describe 'external-tool probe guards' {

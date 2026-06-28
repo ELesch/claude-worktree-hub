@@ -218,11 +218,16 @@ function Get-HubReadiness {
                 $scripts = $pkg.scripts
             }
             catch { $scripts = $null }
-            if ($scripts) {
+            # Anchor extraction on the configured PM as the leading token, so only a real
+            # pm-script invocation yields a name: `<pm> run <script>` / `<pm> [run] <script>`.
+            # A direct binary (`vitest run`, `turbo test`, `tsc --noEmit`) matches neither and
+            # is skipped - no false "missing script 'run'/'--coverage'" warning.
+            if ($scripts -and $Config.packageManager) {
+                $pmEsc = [regex]::Escape($Config.packageManager)
                 $names = @($scripts.PSObject.Properties.Name)
                 $refs = @()
-                if ($Config.verifyCmd -and ($Config.verifyCmd -match '^\s*\S+\s+run\s+(\S+)')) { $refs += $Matches[1] }
-                if ($Config.testCmd -and ($Config.testCmd -match '^\s*\S+\s+(?:run\s+)?(\S+)$')) { $refs += $Matches[1] }
+                if ($Config.verifyCmd -and ($Config.verifyCmd -match "^\s*$pmEsc\s+run\s+(\S+)$")) { $refs += $Matches[1] }
+                if ($Config.testCmd -and ($Config.testCmd -match "^\s*$pmEsc\s+(?:run\s+)?(\S+)$")) { $refs += $Matches[1] }
                 foreach ($ref in $refs) {
                     if ($names -notcontains $ref) { $problems.Add("missing npm script '$ref'") }
                 }
