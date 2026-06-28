@@ -81,3 +81,28 @@ Describe 'Test-ConfigPlaceholder' {
         Test-ConfigPlaceholder -Config ([pscustomobject]@{ repo = 'acme/widgets' }) | Should -BeFalse
     }
 }
+
+Describe 'Test-GitPointer' {
+    It 'is true for a BOM-free file containing gitdir: ./.bare' {
+        $p = Join-Path $TestDrive 'good.git'
+        [System.IO.File]::WriteAllText($p, "gitdir: ./.bare`n", (New-Object System.Text.UTF8Encoding($false)))
+        Test-GitPointer -Path $p | Should -BeTrue
+    }
+    It 'is false when the file has a UTF-8 BOM' {
+        $p = Join-Path $TestDrive 'bom.git'
+        [System.IO.File]::WriteAllText($p, "gitdir: ./.bare`n", (New-Object System.Text.UTF8Encoding($true)))
+        Test-GitPointer -Path $p | Should -BeFalse
+    }
+    It 'is false when the content is wrong' {
+        $p = Join-Path $TestDrive 'wrong.git'
+        [System.IO.File]::WriteAllText($p, "gitdir: ./elsewhere`n", (New-Object System.Text.UTF8Encoding($false)))
+        Test-GitPointer -Path $p | Should -BeFalse
+    }
+    It 'is false when the path is a directory' {
+        $p = Join-Path $TestDrive 'dir.git'; New-Item -ItemType Directory -Path $p | Out-Null
+        Test-GitPointer -Path $p | Should -BeFalse
+    }
+    It 'is false when the path does not exist' {
+        Test-GitPointer -Path (Join-Path $TestDrive 'missing.git') | Should -BeFalse
+    }
+}

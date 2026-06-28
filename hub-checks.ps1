@@ -33,6 +33,16 @@ function Test-ConfigPlaceholder {
     return ($Config.repo -eq 'owner/repo')
 }
 
+function Test-GitPointer {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path $Path -PathType Leaf)) { return $false }   # missing, or a directory
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        return $false   # UTF-8 BOM - git silently fails to parse this
+    }
+    return ([System.IO.File]::ReadAllText($Path).Trim() -eq 'gitdir: ./.bare')
+}
+
 function Get-PackageManagerFromLockfile {
     param([Parameter(Mandatory)][string]$WorktreePath)
     # Ordered so pnpm wins if multiple lockfiles coexist (matches the repo's pnpm default).
