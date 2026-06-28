@@ -78,6 +78,15 @@ function Invoke-PreflightPhase {
 function Invoke-BootstrapPhase {
     Write-Phase 'Phase 2/6 - Bare-repo bootstrap'
     if (Test-BareRepo -HubRoot $Hub) { Write-Note 'Already bootstrapped (.bare present). Skipping.'; return }
+    # Preflight: init-hub.ps1 hard-throws if git/gh aren't on PATH (its own preflight). Replace
+    # that raw exception with a clean note + skip; Phase 6's doctor still reports the missing
+    # tool as a blocker, so the honest NOT-READY verdict is preserved - nothing is hidden.
+    foreach ($tool in 'git', 'gh') {
+        if (-not (Test-OnPath -Name $tool)) {
+            Write-Note "Cannot bootstrap yet: '$tool' is not on PATH. Install it (see Phase 1) and re-run .\setup-hub.ps1."
+            return
+        }
+    }
     $url = $CloneUrl
     if (-not $url) {
         if ($DryRun) { Write-Note '(dry-run) would prompt for a clone URL and run init-hub.ps1'; return }
