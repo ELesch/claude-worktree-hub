@@ -57,8 +57,23 @@ $db = Join-Path $reviewDir 'coverage.db'
 function q([string]$s) { if ($null -eq $s) { return '' } ($s -replace "'", "''") }
 # .timeout makes concurrent writers (8+ solver worktrees) wait instead of failing with "database is locked"
 # (silently, unlike `PRAGMA busy_timeout` which echoes the value).
-function Exec([string]$sql) { $sql | & sqlite3 -cmd ".timeout 8000" $db }
-function Query([string]$sql) { & sqlite3 -cmd ".timeout 8000" -header -column $db $sql }
+function Exec([string]$sql) {
+    $sql | & sqlite3 -cmd ".timeout 8000" $db
+    # Native sqlite3 failures do NOT trip $ErrorActionPreference='Stop'; surface them instead of
+    # silently dropping the write (a stamped topic with no rows is worse than a loud failure).
+    if ($LASTEXITCODE -ne 0) { throw "sqlite3 write failed (exit $LASTEXITCODE): $($sql.Substring(0,[Math]::Min(160,$sql.Length)))" }
+}
+function Query([string]$sql) {
+    & sqlite3 -cmd ".timeout 8000" -header -column $db $sql
+    if ($LASTEXITCODE -ne 0) { Write-Warning "sqlite3 query failed (exit $LASTEXITCODE)" }
+}
+# Scalar read with the same busy-timeout; throws on a real sqlite error instead of returning '' (which
+# would silently misclassify issue origin/severity in `issue sync` under concurrent write locks).
+function Scalar([string]$sql) {
+    $r = & sqlite3 -cmd ".timeout 8000" $db $sql
+    if ($LASTEXITCODE -ne 0) { throw "sqlite3 read failed (exit $LASTEXITCODE): $sql" }
+    return $r
+}
 function NullableInt([int]$v) { if ($v -gt 0) { "$v" } else { 'NULL' } }
 
 switch ($Command) {
@@ -133,7 +148,7 @@ CREATE INDEX IF NOT EXISTS ix_issue_target_path ON issue_target(path);
         $rows = @()
         foreach ($d in 'components', 'lib') {
             $p = Join-Path $Hub "$($HubConfig.baseWorktree)\$d"
-            if (Test-Path $p) { Get-ChildItem -Directory $p | ForEach-Object { $rows += "INSERT OR IGNORE INTO inventory(kind,name,area) VALUES('module','$d/$($_.Name)','$($_.Name)');" } }
+            if (Test-Path $p) { Get-ChildItem -Directory $p | ForEach-Object { $rows += "INSERT OR IGNORE INTO inventory(kind,name,area) VALUES('module','$(q "$d/$($_.Name)")','$(q $_.Name)');" } }
         }
         # surfaces (generic)
         'app', 'database', 'logs', 'security', 'performance', 'a11y', 'deps', 'tests' | ForEach-Object {
@@ -357,14 +372,14 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
                     $labels = q (@($i.labels | ForEach-Object { $_.name }) -join ',')
                     $author = if ($i.author) { q $i.author.login } else { '' }
                     $isRecon = (@($i.labels | Where-Object { $_.name -eq 'recon' }).Count -gt 0)
-                    $fid = (& sqlite3 $db "SELECT id FROM finding WHERE github_issue=$num LIMIT 1;")
-                    $rid = (& sqlite3 $db "SELECT id FROM recommendation WHERE github_issue=$num LIMIT 1;")
+                    $fid = (Scalar "SELECT id FROM finding WHERE github_issue=$num LIMIT 1;")
+                    $rid = (Scalar "SELECT id FROM recommendation WHERE github_issue=$num LIMIT 1;")
                     $origin = if ($isRecon -or $fid) { 'recon' } elseif ($rid) { 'recommendation' } else { 'user' }
-                    $sevHint = (& sqlite3 $db "SELECT COALESCE((SELECT severity FROM finding WHERE github_issue=$num LIMIT 1),(SELECT severity FROM recommendation WHERE github_issue=$num LIMIT 1));")
+                    $sevHint = (Scalar "SELECT COALESCE((SELECT severity FROM finding WHERE github_issue=$num LIMIT 1),(SELECT severity FROM recommendation WHERE github_issue=$num LIMIT 1));")
                     $sevVal = if ($sevHint) { "'$(q $sevHint)'" } else { 'NULL' }
                     $fidVal = if ($fid) { "$fid" } else { 'NULL' }
                     $ridVal = if ($rid) { "$rid" } else { 'NULL' }
-                    if (& sqlite3 $db "SELECT 1 FROM issue WHERE number=$num;") { $upd++ } else { $new++ }
+                    if (Scalar "SELECT 1 FROM issue WHERE number=$num;") { $upd++ } else { $new++ }
                     Exec @"
 INSERT INTO issue(number,title,labels,author,origin,severity,finding_id,recommendation_id,synced_at,updated_at)
 VALUES($num,'$title','$labels','$author','$origin',$sevVal,$fidVal,$ridVal,datetime('now'),datetime('now'))

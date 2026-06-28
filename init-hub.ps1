@@ -62,6 +62,12 @@ Step "Configuring fetch refspec + gc.auto=0" {
 Step "Creating base worktree '$BaseWorktree' tracking origin/$DefaultBranch" {
     Invoke-Git -C $Hub worktree add $BaseWorktree "origin/$DefaultBranch"
     & git -C (Join-Path $Hub $BaseWorktree) branch --set-upstream-to="origin/$DefaultBranch" $DefaultBranch 2>$null | Out-Null
+    # Don't hard-fail (worktree add from a remote ref may leave a detached HEAD with no local branch to
+    # set upstream on), but don't swallow it silently either - the "no tracking information" lesson is
+    # exactly what this line prevents, so surface a warning if it didn't take.
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "    note: could not set upstream for '$DefaultBranch' - verify with: git -C $BaseWorktree status -sb (run 'git branch --set-upstream-to=origin/$DefaultBranch $DefaultBranch' inside it if needed)." -ForegroundColor Yellow
+    }
 }
 
 Step "Generating hub.config.json" {

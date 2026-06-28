@@ -34,9 +34,27 @@ if (Test-Path $WtPath) {
 
 if (Test-Path $WtPath) {
     Write-Host "==> Removing worktree '$Name'..." -ForegroundColor Cyan
-    if ($Force) { & git -C $Hub worktree remove --force $Name } else { & git -C $Hub worktree remove $Name }
-    if ($LASTEXITCODE -ne 0) {
-        throw "worktree remove failed (likely uncommitted changes). Re-run with -Force to discard them."
+    if ($Force) {
+        # On Windows `worktree remove --force` usually unregisters the worktree but returns non-zero and
+        # leaves the folder on disk (node_modules quirk). Ignore the exit code and finish with rm -rf,
+        # mirroring retire-worktree.ps1 - otherwise the folder orphans and the old throw mis-reported it
+        # as "uncommitted changes" even though -Force was already passed.
+        & git -C $Hub worktree remove --force $Name 2>&1 | Out-Null
+        if (Test-Path $WtPath) {
+            $bash = (Get-Command bash -ErrorAction SilentlyContinue).Source
+            if ($bash) {
+                $bashPath = '/' + $WtPath.Substring(0, 1).ToLower() + ($WtPath.Substring(2) -replace '\\', '/')
+                & $bash -c "rm -rf '$bashPath'" 2>$null
+            }
+            if (Test-Path $WtPath) { try { Remove-Item -LiteralPath $WtPath -Recurse -Force -ErrorAction Stop } catch {} }
+        }
+        if (Test-Path $WtPath) { Write-Host "!! folder '$WtPath' still present (locked? close any window holding it, then re-run)." -ForegroundColor Yellow }
+    }
+    else {
+        & git -C $Hub worktree remove $Name
+        if ($LASTEXITCODE -ne 0) {
+            throw "worktree remove failed (likely uncommitted changes). Re-run with -Force to discard them."
+        }
     }
 }
 else {
