@@ -6,9 +6,6 @@
   Public: New-CheckResult, Get-ReadinessVerdict, Get-HubReadiness, plus pure helpers.
 #>
 
-# $PSScriptRoot here = the hub root (this file lives at the hub root).
-$Hub = $PSScriptRoot
-
 function New-CheckResult {
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -71,9 +68,11 @@ function Test-GhAuth {
 }
 
 function Test-GhCredentialHelper {
-    # gh auth setup-git writes a credential.<host>.helper that invokes gh. Best-effort detection.
+    # gh auth setup-git writes a credential.<host>.helper whose VALUE invokes `gh auth git-credential`.
+    # Match that value (not the host) - a github.com host with a non-gh GCM helper must NOT match.
+    if (-not (Test-OnPath -Name 'git')) { return $false }
     $cfg = (& git config --get-regexp '^credential.*\.helper$' 2>$null)
-    return [bool]($cfg -match 'gh')
+    return [bool]($cfg -match 'gh(\.exe)?["'']?\s+auth\s+git-credential')
 }
 
 function Test-BareRepo {
@@ -194,18 +193,43 @@ function Get-HubReadiness {
                 -Detail $(if ($cfgOk) { "repo=$($Config.repo)" } else { 'missing or placeholder' }) `
                 -Fix 'Run setup-hub.ps1 (or edit hub.config.json: set "repo")') )
 
-    # config commands match the project - only meaningful when config + a Node project exist
+    # config commands match the project - lockfile-detected PM vs config, AND the npm scripts
+    # referenced by verifyCmd/testCmd exist. Only meaningful when config + a Node project exist.
     if ($cfgOk) {
         $baseDir = Join-Path $HubRoot $Config.baseWorktree
         $detected = Get-PackageManagerFromLockfile -WorktreePath $baseDir
-        $hasNode = $detected -or (Test-Path (Join-Path $baseDir 'package.json'))
+        $pkgPath = Join-Path $baseDir 'package.json'
+        $hasNode = $detected -or (Test-Path $pkgPath)
         if (-not $hasNode) {
             $r.Add( (New-CheckResult -Name 'config commands match project' -Category config -Status ok -Detail 'n/a (no lockfile/package.json)') )
         }
         else {
-            $match = (-not $detected) -or ($Config.packageManager -eq $detected)
+            $problems = [System.Collections.Generic.List[string]]::new()
+            if ($detected -and ($Config.packageManager -ne $detected)) {
+                $problems.Add("config=$($Config.packageManager) but lockfile=$detected")
+            }
+            # Best-effort: pull the script names confidently referenced by verifyCmd/testCmd and
+            # confirm they exist in package.json's .scripts. Skip commands that aren't a simple
+            # pm-script invocation (don't false-warn). Read defensively - a bad/absent file just
+            # skips the script half rather than throwing under $ErrorActionPreference='Stop'.
+            $scripts = $null
+            try {
+                $pkg = Get-Content $pkgPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                $scripts = $pkg.scripts
+            }
+            catch { $scripts = $null }
+            if ($scripts) {
+                $names = @($scripts.PSObject.Properties.Name)
+                $refs = @()
+                if ($Config.verifyCmd -and ($Config.verifyCmd -match '^\s*\S+\s+run\s+(\S+)')) { $refs += $Matches[1] }
+                if ($Config.testCmd -and ($Config.testCmd -match '^\s*\S+\s+(?:run\s+)?(\S+)$')) { $refs += $Matches[1] }
+                foreach ($ref in $refs) {
+                    if ($names -notcontains $ref) { $problems.Add("missing npm script '$ref'") }
+                }
+            }
+            $match = ($problems.Count -eq 0)
             $r.Add( (New-CheckResult -Name 'config commands match project' -Category config -Status (& $st $match 'ok' 'warn') `
-                        -Detail $(if ($match) { "packageManager=$($Config.packageManager)" } else { "config=$($Config.packageManager) but lockfile=$detected" }) `
+                        -Detail $(if ($match) { "packageManager=$($Config.packageManager)" } else { $problems -join '; ' }) `
                         -Fix 'setup-hub.ps1 offers to update installCmd/verifyCmd/testCmd') )
         }
     }

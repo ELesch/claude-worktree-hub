@@ -65,6 +65,13 @@ Describe 'Get-PackageManagerFromLockfile' {
         $d = Join-Path $TestDrive 'empty'; New-Item -ItemType Directory -Path $d | Out-Null
         Get-PackageManagerFromLockfile -WorktreePath $d | Should -BeNullOrEmpty
     }
+    It 'prefers pnpm when several lockfiles coexist (ordered precedence)' {
+        $d = Join-Path $TestDrive 'multi'; New-Item -ItemType Directory -Path $d | Out-Null
+        New-Item -ItemType File -Path (Join-Path $d 'package-lock.json') | Out-Null
+        New-Item -ItemType File -Path (Join-Path $d 'yarn.lock') | Out-Null
+        New-Item -ItemType File -Path (Join-Path $d 'pnpm-lock.yaml') | Out-Null
+        Get-PackageManagerFromLockfile -WorktreePath $d | Should -Be 'pnpm'
+    }
 }
 
 Describe 'Test-ConfigPlaceholder' {
@@ -195,6 +202,99 @@ Describe 'Get-HubReadiness' {
         }
         It 'flags the config check as fail' {
             ($script:results | Where-Object { $_.Name -eq 'hub.config.json valid + repo set' }).Status | Should -Be 'fail'
+        }
+    }
+
+    Context 'a fully healthy config (superpowers preamble + Node base) emits all 21 checks' {
+        BeforeAll {
+            $script:fullConfig = [pscustomobject]@{
+                repo = 'acme/widgets'; baseWorktree = 'main'; defaultBranch = 'main'
+                packageManager = 'pnpm'; envFiles = @('.env')
+                complexPromptPreamble = '/superpowers:using-superpowers'
+            }
+            Mock Test-OnPath { $true }
+            Mock Test-GhAuth { $true }
+            Mock Test-GhCredentialHelper { $true }
+            Mock Test-BareRepo { $true }
+            Mock Test-HubGitConfig { $true }
+            Mock Test-BaseWorktree { $true }
+            Mock Test-GitPointer { $true }
+            Mock Test-LedgerSchema { $true }
+            Mock Test-LedgerSeeded { $true }
+            Mock Get-MissingEnvFiles { @() }
+            Mock Test-Path { $true }   # package.json + WORKTREE.md "present"
+            $script:resultsFull = Get-HubReadiness -Config $script:fullConfig -HubRoot 'TestDrive:\hubf'
+        }
+        It 'emits exactly 21 checks' {
+            $script:resultsFull.Count | Should -Be 21
+        }
+        It 'includes both conditional checks (config-commands + superpowers)' {
+            ($script:resultsFull | Where-Object { $_.Name -eq 'config commands match project' }) | Should -Not -BeNullOrEmpty
+            ($script:resultsFull | Where-Object { $_.Name -eq 'superpowers plugin (preamble)' }) | Should -Not -BeNullOrEmpty
+        }
+        It 'emits the superpowers check in the info category with warn status' {
+            $sp = $script:resultsFull | Where-Object { $_.Name -eq 'superpowers plugin (preamble)' }
+            $sp.Category | Should -Be 'info'
+            $sp.Status   | Should -Be 'warn'
+        }
+    }
+
+    Context 'a missing gh credential helper is a non-blocking warning' {
+        BeforeAll {
+            Mock Test-OnPath { $true }
+            Mock Test-GhAuth { $true }
+            Mock Test-GhCredentialHelper { $false }
+            Mock Test-BareRepo { $true }
+            Mock Test-HubGitConfig { $true }
+            Mock Test-BaseWorktree { $true }
+            Mock Test-GitPointer { $true }
+            Mock Test-LedgerSchema { $true }
+            Mock Test-LedgerSeeded { $true }
+            Mock Get-MissingEnvFiles { @() }
+            Mock Test-Path { $true }
+            $script:resultsCred = Get-HubReadiness -Config $script:goodConfig -HubRoot 'TestDrive:\hubc'
+        }
+        It 'marks the credential-helper check warn (not fail)' {
+            ($script:resultsCred | Where-Object { $_.Name -eq 'gh git credential helper' }).Status | Should -Be 'warn'
+        }
+        It 'stays overall ready (a warn does not block)' {
+            (Get-ReadinessVerdict -Results $script:resultsCred).Ready | Should -BeTrue
+        }
+    }
+
+    Context 'config-commands check warns when a referenced npm script is missing' {
+        BeforeAll {
+            $script:hub6 = Join-Path $TestDrive 'hub6'
+            $base6 = Join-Path $script:hub6 'main'
+            New-Item -ItemType Directory -Path $base6 -Force | Out-Null
+            '{ "scripts": { "test": "jest" } }' | Set-Content -Path (Join-Path $base6 'package.json') -Encoding utf8
+            $script:cfg6 = [pscustomobject]@{
+                repo = 'acme/widgets'; baseWorktree = 'main'; defaultBranch = 'main'
+                packageManager = 'pnpm'; envFiles = @('.env')
+                verifyCmd = 'pnpm run verify'; testCmd = 'pnpm test'
+                complexPromptPreamble = ''
+            }
+            # Mock the side-effecting probes but NOT Test-Path - the real package.json must be read.
+            Mock Test-OnPath { $true }
+            Mock Test-GhAuth { $true }
+            Mock Test-GhCredentialHelper { $true }
+            Mock Test-BareRepo { $true }
+            Mock Test-HubGitConfig { $true }
+            Mock Test-BaseWorktree { $true }
+            Mock Test-GitPointer { $true }
+            Mock Test-LedgerSchema { $true }
+            Mock Test-LedgerSeeded { $true }
+            Mock Get-MissingEnvFiles { @() }
+            $script:results6 = Get-HubReadiness -Config $script:cfg6 -HubRoot $script:hub6
+        }
+        It 'flags config-commands as warn (verify script absent from package.json)' {
+            ($script:results6 | Where-Object { $_.Name -eq 'config commands match project' }).Status | Should -Be 'warn'
+        }
+        It 'names the missing script in the detail' {
+            ($script:results6 | Where-Object { $_.Name -eq 'config commands match project' }).Detail | Should -Match 'verify'
+        }
+        It 'does not falsely flag the present test script' {
+            ($script:results6 | Where-Object { $_.Name -eq 'config commands match project' }).Detail | Should -Not -Match "'test'"
         }
     }
 }
