@@ -24,3 +24,5 @@ hub.config.json
 .env
 .env.*
 !.env.example
+# product brief (per-deployment; generated from PRODUCT.example.md)
+PRODUCT.md

@@ -135,6 +135,13 @@ if (Test-Path $wtRules) {
 }
 else { Write-Host "==> WARNING: hub WORKTREE.md not found - worktree has no standing-rules file to @-mention." -ForegroundColor Yellow }
 
+# --- expert advisors: copy the hub-* consultant agents into the worktree (git-excluded; consulted in-session) ---
+$expertCount = Copy-HubExperts -Hub $Hub -WtPath $WtPath
+if ($expertCount -gt 0) {
+    Add-HubExclude -CommonGitDir (Join-Path $Hub '.bare') -Patterns @('/.claude/agents/hub-*.md')
+    Write-Host "==> $expertCount expert advisor(s) copied into .claude\agents\ (git-excluded)" -ForegroundColor Green
+}
+
 # --- copy env files from the base worktree (gitignored secrets are per-folder) ---
 if (-not $NoEnv) {
     $copied = @()

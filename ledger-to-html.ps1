@@ -11,6 +11,7 @@
     * Findings        — status NOT IN ('completed','dismissed')  (proposed / filed)
     * Recommendations — status = 'proposed'  (out-of-scope solver follow-ups)
     * Hub findings    — status = 'open'  (problems with the hub's own prompts/config/scripts/env)
+    * Consults        — expert decisions (advisory advice + what the worktree decided)
     * Worktrees       — status != 'retired'  (the live monitor view)
 
   The page has a global search box, per-column sorting, severity/status colour badges,
@@ -109,6 +110,15 @@ ORDER BY CASE severity WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 WHEN 'Low' THEN 2
   id;
 "@
 
+$qConsults = Get-Json @"
+SELECT id, COALESCE(worktree,'') AS worktree, expert, COALESCE(area,'') AS area,
+  COALESCE(issue,'') AS issue, question, COALESCE(decision,'') AS decision,
+  COALESCE(followed,'') AS followed, COALESCE(rationale,'') AS rationale,
+  substr(COALESCE(created_at,''),1,10) AS created
+FROM consult
+ORDER BY id DESC;
+"@
+
 $qWorktrees = Get-Json @"
 SELECT name, wtype AS type, COALESCE(issue,'') AS issue, COALESCE(pr,'') AS pr, status,
   CAST((julianday('now')-julianday(updated_at))*1440 AS INT) AS upd_min,
@@ -128,6 +138,7 @@ $dataJson = "{`n" + (@(
         '"findings": ' + $qFindings
         '"recommendations": ' + $qRecs
         '"hubFindings": ' + $qHubFindings
+        '"consults": ' + $qConsults
         '"worktrees": ' + $qWorktrees
     ) -join ",`n") + "`n}"
 # never let a stray </script> in evidence/detail text break the <script> block
@@ -273,6 +284,18 @@ const SECTIONS = [
     {k:'detail',label:'Detail',type:'long'},
     {k:'created',label:'Created'},
   ]},
+  { id:'consults', title:'Consults', desc:'expert decisions (advisory; overrides shown)', rows:DATA.consults, cols:[
+    {k:'id',label:'ID',type:'num'},
+    {k:'worktree',label:'Worktree'},
+    {k:'expert',label:'Expert'},
+    {k:'area',label:'Area'},
+    {k:'issue',label:'Issue',type:'issuelink'},
+    {k:'question',label:'Question',type:'title'},
+    {k:'decision',label:'Decision',type:'long'},
+    {k:'followed',label:'Followed'},
+    {k:'rationale',label:'Rationale',type:'long'},
+    {k:'created',label:'Created'},
+  ]},
   { id:'worktrees', title:'Worktrees', desc:'status ≠ retired (live monitor)', rows:DATA.worktrees, cols:[
     {k:'name',label:'Worktree',type:'title'},
     {k:'type',label:'Type'},
@@ -396,9 +419,9 @@ if ($outDir -and -not (Test-Path $outDir)) { New-Item -ItemType Directory -Force
 
 # quick counts for the console summary
 function Count-Rows([string]$json) { if ($json -eq '[]') { 0 } else { @($json | ConvertFrom-Json).Count } }
-$ci = Count-Rows $qIssues; $cf = Count-Rows $qFindings; $cr = Count-Rows $qRecs; $ch = Count-Rows $qHubFindings; $cw = Count-Rows $qWorktrees
+$ci = Count-Rows $qIssues; $cf = Count-Rows $qFindings; $cr = Count-Rows $qRecs; $ch = Count-Rows $qHubFindings; $cc = Count-Rows $qConsults; $cw = Count-Rows $qWorktrees
 Write-Host ("wrote {0}" -f $Out) -ForegroundColor Green
-Write-Host ("  issues {0} · findings {1} · recommendations {2} · hub-findings {3} · worktrees {4}" -f $ci, $cf, $cr, $ch, $cw) -ForegroundColor DarkGray
+Write-Host ("  issues {0} · findings {1} · recommendations {2} · hub-findings {3} · consults {4} · worktrees {5}" -f $ci, $cf, $cr, $ch, $cc, $cw) -ForegroundColor DarkGray
 
 # --- open in Chrome -------------------------------------------------------------------
 if ($NoOpen) { return }

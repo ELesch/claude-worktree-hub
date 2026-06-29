@@ -2,7 +2,7 @@
   hub-lib.ps1 - shared helpers for the claude-worktree-hub.
   Dot-source it:  . "$PSScriptRoot\hub-lib.ps1"
   Functions: ConvertTo-Slug, Get-IssueAttachmentUrls, Save-IssueImages,
-             ConvertTo-LocalLinks, Save-IssueBundle, Add-HubExclude
+             ConvertTo-LocalLinks, Save-IssueBundle, Add-HubExclude, Copy-HubExperts
   Requires $HubConfig in scope: dot-source hub-config.ps1 before hub-lib.ps1.
 #>
 
@@ -149,4 +149,17 @@ function Save-IssueBundle {
         Title     = $j.title
         Number    = $j.number
     }
+}
+
+function Copy-HubExperts {
+    # Copy the hub's hub-*.md advisory agents into a worktree's .claude\agents (creating it).
+    # Returns the number copied (0 if the hub has none). Leaves any app-owned agents untouched.
+    param([Parameter(Mandatory)][string]$Hub, [Parameter(Mandatory)][string]$WtPath)
+    $src = Join-Path $Hub '.claude\agents'
+    $agents = @(Get-ChildItem -Path $src -Filter 'hub-*.md' -File -ErrorAction SilentlyContinue)
+    if (-not $agents) { return 0 }
+    $dest = Join-Path $WtPath '.claude\agents'
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    foreach ($a in $agents) { Copy-Item $a.FullName (Join-Path $dest $a.Name) -Force }
+    return $agents.Count
 }

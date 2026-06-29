@@ -110,7 +110,7 @@ record — staged candidate issues; lifecycle **proposed → verified → filed 
 dates and a `github_issue` link) · **finding_link** (related/dependency edges between findings: `related` /
 `duplicate-of` / `depends-on` / `blocks`) · **activity** (lifecycle event feed from every worktree) · **worktree**
 (ONE row per worktree, status updated as it progresses = the live monitor) · **recommendation** (out-of-scope
-follow-ups a SOLVER found while fixing its issue: proposed → filed as a GH issue / dismissed; same verify fields) · **hubfinding** (problems with the hub's OWN operating layer — prompts/config/scripts/memory/env — logged by any worktree or the orchestrator; lifecycle open → resolved/dismissed, fixed by editing a hub artifact, **never** a GH issue).
+follow-ups a SOLVER found while fixing its issue: proposed → filed as a GH issue / dismissed; same verify fields) · **hubfinding** (problems with the hub's OWN operating layer — prompts/config/scripts/memory/env — logged by any worktree or the orchestrator; lifecycle open → resolved/dismissed, fixed by editing a hub artifact, **never** a GH issue) · **consult** (one row per expert consultation a worktree logged — `expert`/`area`/`question`/`advice`/`decision`/`followed` (yes|partial|overridden)/`rationale`; append-only; the `overridden`+rationale rows are the signal for improving the experts).
 
 **Monitoring every worktree:** the orchestrator `register`s each worktree at launch; the agent reports
 `progress` (working → spec-gate → pr-open, or blocked) and `recommend`s any out-of-scope issues it found; then
@@ -128,7 +128,7 @@ fan-out (one subagent per finding); it writes only verdicts/links to the ledger,
 
 ```powershell
 .\review-coverage.ps1 init ; .\review-coverage.ps1 seed     # one-time: schema + scan repo -> topics  (setup-hub.ps1 runs these automatically)
-# existing hub upgrading to the hub-findings channel? re-run init once (idempotent) to add the hubfinding table:
+# existing hub upgrading to the hub-findings / consult channels? re-run init once (idempotent) to add the new tables:
 .\review-coverage.ps1 init
 .\review-coverage.ps1 due  -N 8                              # what's due now (priority x staleness)
 .\review-coverage.ps1 run  -N 3                              # launch recon for the top-3 due topics
@@ -139,13 +139,16 @@ fan-out (one subagent per finding); it writes only verdicts/links to the ledger,
 .\review-coverage.ps1 verify-rec -Id 93 -Verdict already-fixed -FixedBy 'PR #N' -Note '<evidence>' [-Severity Low -Confidence high -Dismiss]   # verify a RECOMMENDATION (same fields as verify; already-fixed/out-of-scope auto-dismiss; no link edges)
 .\review-coverage.ps1 findings ; .\review-coverage.ps1 promote -Id 5   # recon triage (verified) -> file as a GH issue
 .\review-coverage.ps1 resolve -Id 81 -Issue 701              # stamp completed_at + status=completed when the fix merges
-.\review-coverage.ps1 monitor                                # live status of EVERY worktree + pending follow-ups
+.\review-coverage.ps1 monitor                                # live status of EVERY worktree + pending follow-ups + recent consults
 .\ledger-to-html.ps1                                         # render ALL open items -> ONE self-contained HTML dashboard + open in Chrome (-NoOpen to just write it)
 .\review-coverage.ps1 recommendations ; .\review-coverage.ps1 file-rec -Id 3   # solver follow-up triage -> GH issue
 # --- hub findings (problems with the hub's OWN prompts/config/scripts/memory/env) ---
 .\review-coverage.ps1 hubfind -Worktree <folder|orchestrator> -Category <env|tool|prompt|config|memory|other> -Title '..' -Detail '..' [-Severity ..]   # log one (any worktree or the orchestrator)
 .\review-coverage.ps1 hub-findings [-All]                    # triage list (open by default)
 .\review-coverage.ps1 hub-resolve -Id 4 -Target <prompt|config|script|memory> -Note '<what changed>'   # close after editing the real artifact (or -Dismiss)
+# --- expert consultations (worktrees consult hub-* advisor agents; advisory; recorded for observability) ---
+.\review-coverage.ps1 consult -Worktree <folder> -Expert hub-<x> -Question '..' -Decision '..' -Followed <yes|partial|overridden> [-Area .. -Advice '..' -Rationale '..' -Issue N]   # record a consultation + decision
+.\product.ps1 -Show ; .\product.ps1 -Append '<product insight>'   # view / update the product brief the hub-dx-product & hub-principal experts ground their advice in
 # --- issue lane (ALL GH issues -> ledger -> review -> approve -> overlap-aware deploy) ---
 .\review-coverage.ps1 issue sync                             # pull every OPEN GH issue into the ledger (origin: user|recon|recommendation)
 .\review-coverage.ps1 issue unreviewed                       # the review QUEUE (synced, not yet reviewed) -> drives the fan-out
@@ -599,7 +602,9 @@ Steps when merging a finished PR:
    worktree's own recommendations — at each close, also glance at the WHOLE pending backlog and keep it fresh:
    `.\review-coverage.ps1 findings -Unverified` (recon findings not yet verified) + `.\review-coverage.ps1
    recommendations` (proposed solver follow-ups, `-N` high enough to see them all — the default is 8) +
-   `.\review-coverage.ps1 hub-findings` (open problems with the hub's own prompts/config/scripts/env).
+   `.\review-coverage.ps1 hub-findings` (open problems with the hub's own prompts/config/scripts/env). Also
+   glance at the merged worktree's **consults** (`.\review-coverage.ps1 monitor` shows recent ones) —
+   especially `overridden` decisions — as part of triage.
    For each open hub finding, fix the real artifact — edit `WORKTREE.md`/`CLAUDE.md`/`hub.config.json`/the
    helper script, or write a memory file — then `hub-resolve -Id <n> -Target <prompt|config|script|memory>
    -Note '<what changed>'` (or `-Dismiss`).
@@ -612,6 +617,9 @@ Steps when merging a finished PR:
    current code/DB and writes only verdicts to the ledger). Then promote the still-valid ones you want worked and
    dismiss the rest (as in step 3). **Never let findings/recs accumulate unreviewed across many merges** —
    reviewing a little at each close is what stops the pile-up.
+   **Improvement loop:** outside the per-merge sweep, periodically review the consult log (which experts on what, the override rate,
+   decisions that later correlated with findings/bugs) and use it to sharpen the `.claude\agents\hub-*.md`
+   expert prompts. The data is structured so this is a query, not an archaeology dig.
 
 ### If `database.enabled` (e.g. Supabase): database migration steps
 

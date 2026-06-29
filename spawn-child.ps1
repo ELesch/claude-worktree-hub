@@ -30,6 +30,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'hub-config.ps1')   # sets $Hub + $HubConfig
+. (Join-Path $Hub 'hub-lib.ps1')
 
 # --- depth guard (recursion backstop) ---
 $parentDepth = ([regex]::Matches($Parent, '--')).Count
@@ -78,6 +79,8 @@ foreach ($f in $HubConfig.envFiles) {
 # copy the canonical standing-rules file (force-included via @-mention; the /WORKTREE.md exclude is hub-global)
 $wtRules = Join-Path $Hub 'WORKTREE.md'
 if (Test-Path $wtRules) { Copy-Item $wtRules (Join-Path $childPath 'WORKTREE.md') -Force }
+$expertCount = Copy-HubExperts -Hub $Hub -WtPath $childPath
+if ($expertCount -gt 0) { Add-HubExclude -CommonGitDir (Join-Path $Hub '.bare') -Patterns @('/.claude/agents/hub-*.md') }
 
 # --- build the child's seeded prompt ---
 if ($Complex) {

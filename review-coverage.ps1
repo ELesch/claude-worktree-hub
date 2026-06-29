@@ -47,6 +47,7 @@ param(
     [string]$Repo,
     [string]$Target,    # hub-resolve: where the fix landed (prompt|config|script|memory). NB: distinct from -Targets (issue owned-paths).
     [string]$DbPath,    # override the ledger path (tests / pre-bootstrap); default <hub>\.review\coverage.db
+    [string]$Expert, [string]$Question, [string]$Advice, [string]$Decision, [string]$Followed, [string]$Rationale,   # consult fields (-Followed: yes|partial|overridden)
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
@@ -140,6 +141,10 @@ CREATE TABLE IF NOT EXISTS hubfinding(
   id INTEGER PRIMARY KEY, source TEXT, wtype TEXT, category TEXT, title TEXT NOT NULL, detail TEXT,
   severity TEXT, status TEXT DEFAULT 'open', target TEXT, resolution TEXT,
   created_at TEXT DEFAULT (datetime('now')), resolved_at TEXT);
+CREATE TABLE IF NOT EXISTS consult(
+  id INTEGER PRIMARY KEY, worktree TEXT, wtype TEXT, expert TEXT NOT NULL, area TEXT, issue INTEGER,
+  question TEXT NOT NULL, advice TEXT, decision TEXT, followed TEXT, rationale TEXT,
+  created_at TEXT DEFAULT (datetime('now')));
 CREATE INDEX IF NOT EXISTS ix_activity_at ON activity(at);
 CREATE INDEX IF NOT EXISTS ix_finding_status ON finding(status);
 CREATE INDEX IF NOT EXISTS ix_worktree_status ON worktree(status);
@@ -149,6 +154,7 @@ CREATE INDEX IF NOT EXISTS ix_issue_status ON issue(review_status);
 CREATE INDEX IF NOT EXISTS ix_issue_target_num ON issue_target(issue_number);
 CREATE INDEX IF NOT EXISTS ix_issue_target_path ON issue_target(path);
 CREATE INDEX IF NOT EXISTS ix_hubfinding_status ON hubfinding(status);
+CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
 '@
         # migrate pre-existing DBs: CREATE TABLE IF NOT EXISTS won't add columns to an existing table.
         $verifyCols = [ordered]@{ verdict = 'TEXT'; confidence = 'TEXT'; orig_severity = 'TEXT'; scope = 'TEXT'; fixed_by = 'TEXT'; verify_notes = 'TEXT'; verified_at = 'TEXT'; completed_at = 'TEXT' }
@@ -369,6 +375,8 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
         Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='proposed' ORDER BY id LIMIT $N;"
         Write-Host "`n=== Open hub findings (prompt / env / config problems) ===" -ForegroundColor Cyan
         Query "SELECT id, source, category AS cat, severity AS sev, substr(title,1,55) AS title FROM hubfinding WHERE status='open' ORDER BY CASE severity WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, id LIMIT $N;"
+        Write-Host "`n=== Recent consults (expert decisions; overrides flagged) ===" -ForegroundColor Cyan
+        Query "SELECT id, worktree, expert, COALESCE(area,'') AS area, COALESCE(followed,'') AS followed, substr(question,1,45) AS question FROM consult ORDER BY id DESC LIMIT $N;"
     }
 
     'recommendations' { Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, status, COALESCE(github_issue,'') AS gh, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='$(q $Status)' ORDER BY id LIMIT $N;" }
@@ -417,6 +425,15 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
             Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('orchestrator','hub','hub-resolve','#$Id -> $(q $Target)');"
             Write-Host "hub finding #$Id resolved (fixed in $Target)." -ForegroundColor Green
         }
+    }
+
+    # ---- expert consultation: a worktree records the advice it got from a hub-* expert + the decision it made ----
+    'consult' {
+        if (-not $Worktree -or -not $Expert -or -not $Question) { throw "consult requires -Worktree, -Expert (hub-<x>), and -Question; use -Area, -Advice, -Decision, -Followed <yes|partial|overridden>, -Rationale, -Issue" }
+        $wt = q $Worktree
+        Exec "INSERT INTO consult(worktree,wtype,expert,area,issue,question,advice,decision,followed,rationale) VALUES('$wt',COALESCE((SELECT wtype FROM worktree WHERE name='$wt'),'solver'),'$(q $Expert)','$(q $Area)',$(NullableInt $Issue),'$(q $Question)','$(q $Advice)','$(q $Decision)','$(q $Followed)','$(q $Rationale)');"
+        Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('$wt',COALESCE((SELECT wtype FROM worktree WHERE name='$wt'),'solver'),'consult','$(q $Expert): $(q $Question)');"
+        Write-Host "consult recorded: $Expert ($(if ($Followed) { $Followed } else { 'noted' }))" -ForegroundColor Green
     }
 
     # ---- issue lane: GH issue -> ledger -> review (orchestrator subagent fan-out) -> approve -> overlap-aware deploy ----

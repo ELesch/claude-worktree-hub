@@ -139,3 +139,65 @@ Describe 'verify-rec' {
         { & $script:rc verify-rec -DbPath $db -Verdict still-valid } | Should -Throw
     }
 }
+
+Describe 'consult schema' {
+    It 'init creates the consult table with the expected columns' {
+        $db = New-TempDb
+        $cols = (& sqlite3 $db "SELECT name FROM pragma_table_info('consult') ORDER BY name;") -join ','
+        $cols | Should -Be 'advice,area,created_at,decision,expert,followed,id,issue,question,rationale,worktree,wtype'
+    }
+}
+
+Describe 'consult verb' {
+    It 'records a consultation with expert, area, issue, followed' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'issue-9-x' -Expert hub-architect -Area architecture -Question 'where does the cache layer live?' -Advice 'behind the repository interface' -Decision 'cache in the repository' -Followed yes -Issue 9 | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT worktree,expert,area,issue,followed FROM consult WHERE id=1;") | Should -Be 'issue-9-x|hub-architect|architecture|9|yes'
+    }
+    It 'captures an override with its rationale' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-data -Question 'normalize tags?' -Advice 'separate tags table' -Decision 'inline JSON for now' -Followed overridden -Rationale 'YAGNI; under 100 rows expected' | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT followed,rationale FROM consult WHERE id=1;") | Should -Be 'overridden|YAGNI; under 100 rows expected'
+    }
+    It 'writes an activity row for the live feed' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-security -Question 'sanitize this input?' | Out-Null
+        (& sqlite3 $db "SELECT event FROM activity WHERE worktree='w' AND event='consult';") | Should -Be 'consult'
+        (& sqlite3 $db "SELECT detail FROM activity WHERE worktree='w' AND event='consult';") | Should -Be 'hub-security: sanitize this input?'
+    }
+    It 'throws when -Worktree is missing' {
+        $db = New-TempDb
+        { & $script:rc consult -DbPath $db -Expert hub-architect -Question 'q' } | Should -Throw
+    }
+    It 'throws when -Expert is missing' {
+        $db = New-TempDb
+        { & $script:rc consult -DbPath $db -Worktree 'w' -Question 'q only' } | Should -Throw
+    }
+    It 'throws when -Question is missing' {
+        $db = New-TempDb
+        { & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-architect } | Should -Throw
+    }
+}
+
+Describe 'monitor shows consults' {
+    It 'includes the recent-consults section and a logged expert' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-observability -Question 'what to log on retry?' -Followed yes | Out-Null
+        $out = (& $script:rc monitor -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Recent consults'
+        $out | Should -Match 'hub-observability'
+    }
+}
+
+Describe 'ledger-to-html includes consults' {
+    It 'renders a Consults section with a logged decision (no hub.config.json needed)' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-dx-product -Question 'flag name?' -Decision 'use --dry-run' -Followed yes | Out-Null
+        $html = Join-Path $TestDrive 'ledger.html'
+        $renderer = $script:rc.Replace('review-coverage.ps1', 'ledger-to-html.ps1')
+        & $renderer -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
+        $text = Get-Content $html -Raw
+        $text | Should -Match 'Consults'
+        $text | Should -Match 'flag name\?'
+    }
+}
