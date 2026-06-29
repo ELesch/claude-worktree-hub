@@ -375,6 +375,8 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
         Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='proposed' ORDER BY id LIMIT $N;"
         Write-Host "`n=== Open hub findings (prompt / env / config problems) ===" -ForegroundColor Cyan
         Query "SELECT id, source, category AS cat, severity AS sev, substr(title,1,55) AS title FROM hubfinding WHERE status='open' ORDER BY CASE severity WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, id LIMIT $N;"
+        Write-Host "`n=== Recent consults (expert decisions; overrides flagged) ===" -ForegroundColor Cyan
+        Query "SELECT id, worktree, expert, COALESCE(area,'') AS area, COALESCE(followed,'') AS followed, substr(question,1,45) AS question FROM consult ORDER BY id DESC LIMIT $N;"
     }
 
     'recommendations' { Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, status, COALESCE(github_issue,'') AS gh, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='$(q $Status)' ORDER BY id LIMIT $N;" }

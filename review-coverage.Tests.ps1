@@ -178,3 +178,13 @@ Describe 'consult verb' {
         { & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-architect } | Should -Throw
     }
 }
+
+Describe 'monitor shows consults' {
+    It 'includes the recent-consults section and a logged expert' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-observability -Question 'what to log on retry?' -Followed yes | Out-Null
+        $out = (& $script:rc monitor -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Recent consults'
+        $out | Should -Match 'hub-observability'
+    }
+}
