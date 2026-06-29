@@ -164,15 +164,18 @@ Three read-only **product-reviewer personas** are also provisioned into your `.c
    NOT rely on the persona reading your files. It returns: legitimacy · necessity (+confidence) · scope · recommendation.
 3. Act on the verdict:
    - **necessary** → proceed with your track.
-   - **not-necessary at HIGH confidence** → **HALT.** Do not install or write code. Set status
-     `halted-unnecessary`, record the consult, and produce your completion report (§4) recommending the user
-     **close #<N>**. Do **not** close the issue yourself.
+   - **not-necessary at HIGH confidence** *(recon/recommendation origin)* → **HALT.** Do not install or write
+     code. Set status `halted-unnecessary`, record the consult, and produce your completion report (§4)
+     recommending the user **close #<N>**. Do **not** close the issue yourself. (User-origin issues are never
+     auto-HALTed — see step 4.)
    - **borderline, not-necessary at medium/low confidence, already-fixed/out-of-scope, or needs-info** →
      **STOP and ask the user** (set status `spec-gate`): present the verdict and wait. Record the consult
      **and the user's choice**.
-4. **Calibrate by origin:** if the issue is **user-origin** (the user filed/approved it), never auto-HALT —
-   confirm and right-size the scope; only the user can drop their own request. Weigh "should we do this at
-   all" only for recon/recommendation-origin items.
+4. **Calibrate by origin:** if the issue is **user-origin** (the user filed/approved it), **never auto-HALT**.
+   A **necessary** verdict → confirm and right-size the scope, then proceed. If the persona nonetheless calls it
+   **not-necessary**, do **not** HALT and do **not** silently drop it — **route to the user gate** (STOP and ask,
+   status `spec-gate`); the user's own request outranks the persona, and only the user can drop it. Weigh
+   "should we do this at all" only for recon/recommendation-origin items.
 5. **Record it** (system of record + refinement loop) — and, when you proceed, also summarize the verdict in
    your PR's `## Design decisions` section like any other consult:
    ```powershell
@@ -211,8 +214,10 @@ This is the hub-level sibling of §5 (Recommended follow-ups): §5 is for out-of
 & <hub>\review-coverage.ps1 consult   -Worktree <FOLDER> -Expert hub-<x> -Question '<decision>' -Decision '<what you decided>' -Followed <yes|partial|overridden> [-Area <a> -Advice '<...>' -Rationale '<...>' -Issue <N>]   # each expert consult (see §6)
 ```
 
-If you **STOP early**, set the status instead of `pr-open`:
-`progress -Worktree <FOLDER> -Status blocked -Note '<why>'`.
+If you **STOP early**, set the status instead of `pr-open` — pick the one that fits: `halted-unnecessary` when
+the §6a product gate auto-halted the work, `spec-gate` when waiting at a gate for the user, or `blocked` when
+stuck on an external dependency:
+`progress -Worktree <FOLDER> -Status <halted-unnecessary|spec-gate|blocked> -Note '<why>'`.
 
 ## 9. Environment note
 
