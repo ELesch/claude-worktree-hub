@@ -45,14 +45,25 @@ param(
     [string]$Targets, [string]$Reads, [string]$Effort, [string]$Track,   # issue-review fields
     [switch]$Unverified, [switch]$Dismiss, [switch]$All,
     [string]$Repo,
+    [string]$Target,    # hub-resolve: where the fix landed (prompt|config|script|memory). NB: distinct from -Targets (issue owned-paths).
+    [string]$DbPath,    # override the ledger path (tests / pre-bootstrap); default <hub>\.review\coverage.db
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'hub-config.ps1')   # sets $Hub + $HubConfig
-if (-not $Repo) { $Repo = $HubConfig.repo }
-$reviewDir = Join-Path $Hub '.review'
-if (-not (Test-Path $reviewDir)) { New-Item -ItemType Directory -Force -Path $reviewDir | Out-Null }
-$db = Join-Path $reviewDir 'coverage.db'
+# Ledger/monitor verbs are local SQLite and must work even before the hub is configured
+# (no hub.config.json yet — tests, or `monitor` on a half-set-up hub). Only the GitHub/
+# base-worktree verbs (seed / promote / file-rec / issue sync) actually need config.
+try { . (Join-Path $PSScriptRoot 'hub-config.ps1') }   # sets $Hub + $HubConfig
+catch { $Hub = $PSScriptRoot; $HubConfig = $null; $configError = $_ }
+if (-not $Repo -and $HubConfig) { $Repo = $HubConfig.repo }
+if (-not $HubConfig -and (($Command -in @('seed', 'promote', 'file-rec')) -or ($Command -eq 'issue' -and $Sub -eq 'sync'))) {
+    throw $configError
+}
+$db = if ($DbPath) { $DbPath } else {
+    $reviewDir = Join-Path $Hub '.review'
+    if (-not (Test-Path $reviewDir)) { New-Item -ItemType Directory -Force -Path $reviewDir | Out-Null }
+    Join-Path $reviewDir 'coverage.db'
+}
 
 function q([string]$s) { if ($null -eq $s) { return '' } ($s -replace "'", "''") }
 # .timeout makes concurrent writers (8+ solver worktrees) wait instead of failing with "database is locked"
@@ -125,6 +136,10 @@ CREATE TABLE IF NOT EXISTS issue_target(
 CREATE TABLE IF NOT EXISTS issue_link(
   id INTEGER PRIMARY KEY, issue_number INTEGER NOT NULL, related_number INTEGER NOT NULL,
   kind TEXT NOT NULL, note TEXT, created_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS hubfinding(
+  id INTEGER PRIMARY KEY, source TEXT, wtype TEXT, category TEXT, title TEXT NOT NULL, detail TEXT,
+  severity TEXT, status TEXT DEFAULT 'open', target TEXT, resolution TEXT,
+  created_at TEXT DEFAULT (datetime('now')), resolved_at TEXT);
 CREATE INDEX IF NOT EXISTS ix_activity_at ON activity(at);
 CREATE INDEX IF NOT EXISTS ix_finding_status ON finding(status);
 CREATE INDEX IF NOT EXISTS ix_worktree_status ON worktree(status);
@@ -133,6 +148,7 @@ CREATE INDEX IF NOT EXISTS ix_finding_link_finding ON finding_link(finding_id);
 CREATE INDEX IF NOT EXISTS ix_issue_status ON issue(review_status);
 CREATE INDEX IF NOT EXISTS ix_issue_target_num ON issue_target(issue_number);
 CREATE INDEX IF NOT EXISTS ix_issue_target_path ON issue_target(path);
+CREATE INDEX IF NOT EXISTS ix_hubfinding_status ON hubfinding(status);
 '@
         # migrate pre-existing DBs: CREATE TABLE IF NOT EXISTS won't add columns to an existing table.
         $verifyCols = [ordered]@{ verdict = 'TEXT'; confidence = 'TEXT'; orig_severity = 'TEXT'; scope = 'TEXT'; fixed_by = 'TEXT'; verify_notes = 'TEXT'; verified_at = 'TEXT'; completed_at = 'TEXT' }
@@ -329,6 +345,8 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
 "@
         Write-Host "`n=== Proposed recommendations (out-of-scope follow-ups) ===" -ForegroundColor Cyan
         Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='proposed' ORDER BY id LIMIT $N;"
+        Write-Host "`n=== Open hub findings (prompt / env / config problems) ===" -ForegroundColor Cyan
+        Query "SELECT id, source, category AS cat, severity AS sev, substr(title,1,55) AS title FROM hubfinding WHERE status='open' ORDER BY CASE severity WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, id LIMIT $N;"
     }
 
     'recommendations' { Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, status, COALESCE(github_issue,'') AS gh, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='$(q $Status)' ORDER BY id LIMIT $N;" }
@@ -349,6 +367,35 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
     }
 
     'dismiss-rec' { if (-not $Id) { throw "dismiss-rec requires -Id" }; Exec "UPDATE recommendation SET status='dismissed' WHERE id=$Id;"; Write-Host "recommendation #$Id dismissed." -ForegroundColor Yellow }
+
+    # ---- hub findings: problems with the hub's OWN operating layer (prompts/config/scripts/memory/env) ----
+    'hubfind' {
+        if (-not $Worktree -or -not $Title) { throw "hubfind requires -Worktree (folder or 'orchestrator') and -Title; use -Category <env|tool|prompt|config|memory|other>, -Detail, -Severity" }
+        $wt = q $Worktree
+        $defWty = if ($Worktree -eq 'orchestrator') { 'orchestrator' } else { 'solver' }
+        Exec "INSERT INTO hubfinding(source,wtype,category,title,detail,severity) VALUES('$wt',COALESCE((SELECT wtype FROM worktree WHERE name='$wt'),'$defWty'),'$(q $Category)','$(q $Title)','$(q $Detail)','$(q $Severity)');"
+        Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('$wt','hub','hubfind','$(q $Title)');"
+        Write-Host "hub finding recorded: $Title" -ForegroundColor Green
+    }
+
+    'hub-findings' {
+        $where = if ($All) { '1=1' } else { "status='open'" }
+        Query "SELECT id, source, category AS cat, severity AS sev, status, COALESCE(target,'') AS target, substr(title,1,55) AS title FROM hubfinding WHERE $where ORDER BY CASE severity WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, id LIMIT $N;"
+    }
+
+    'hub-resolve' {
+        if (-not $Id) { throw "hub-resolve requires -Id <hub finding id>" }
+        if ($Dismiss) {
+            Exec "UPDATE hubfinding SET status='dismissed', resolution='$(q $Note)', resolved_at=datetime('now') WHERE id=$Id;"
+            Write-Host "hub finding #$Id dismissed." -ForegroundColor Yellow
+        }
+        else {
+            if (-not $Target) { throw "hub-resolve requires -Target <prompt|config|script|memory> (or use -Dismiss)" }
+            Exec "UPDATE hubfinding SET status='resolved', target='$(q $Target)', resolution='$(q $Note)', resolved_at=datetime('now') WHERE id=$Id;"
+            Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('orchestrator','hub','hub-resolve','#$Id -> $(q $Target)');"
+            Write-Host "hub finding #$Id resolved (fixed in $Target)." -ForegroundColor Green
+        }
+    }
 
     # ---- issue lane: GH issue -> ledger -> review (orchestrator subagent fan-out) -> approve -> overlap-aware deploy ----
 

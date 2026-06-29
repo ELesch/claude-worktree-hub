@@ -175,6 +175,7 @@ child worktrees for genuinely large independent pieces. One PR to `main`.
 .\review-coverage.ps1 issue next -N 8                  # overlap-aware wave selector (file-disjoint)
 .\review-coverage.ps1 findings                         # recon finding triage
 .\review-coverage.ps1 recommendations                  # solver follow-up backlog
+.\review-coverage.ps1 hub-findings                     # hub-layer problems (prompt/config/script/env): hubfind logs, hub-resolve closes
 .\ledger-to-html.ps1                                   # render all open items to an HTML dashboard
 ```
 

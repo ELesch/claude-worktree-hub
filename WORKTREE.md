@@ -38,7 +38,7 @@ Work to the standard of a **professional app-development team**:
    title (`fix(#<N>): …` / `feat(#<N>): …`) and put **`Fixes #<N>`** in the PR body so the issue auto-closes
    on merge. **DO NOT merge.**
 6. Finish with the **completion report** (section 4) as your **last output**.
-7. **Record to the hub ledger** (section 6).
+7. **Record to the hub ledger** (section 7).
 
 If the fix turns out **larger or more architectural than expected**, switch to the gated track (section 3):
 write a **proper** `SPEC.md` + `PLAN.md` and **STOP for the user's review** before implementing.
@@ -78,7 +78,8 @@ note, **never hidden**.
   'Commits|<N> on <BRANCH> (<shortSHA>)',
   'PR|#<M> <url>  (base <defaultBranch>, NOT merged)',
   'Status|✅ pushed · ✅ PR opened · ⏳ awaiting your review/merge',
-  'Recommended follow-ups|<N found — see table below  /  none>'
+  'Recommended follow-ups|<N found — see table below  /  none>',
+  'Hub findings|<N logged this session — see ledger / none>'
 ```
 
 (Complex track: swap the `Root cause`/`Fix` rows for `Approach` + `Pieces` rows.)
@@ -98,17 +99,35 @@ stay scoped), list them as **recommended follow-up issues** so the user can choo
 
 Real follow-ups only — be specific, don't pad. If none, say "Recommended follow-ups: none."
 
-## 6. Record to the hub ledger (system of record for monitoring + triage)
+## 6. Hub findings (problems with these instructions / your environment — not the repo's code)
+
+If a problem is with **how this hub is operating you** rather than with the repo you were sent to fix —
+a command or tool that isn't what the prompt implied, the **wrong terminal assumption** (this hub is
+PowerShell, not bash), a wrong configured value, or an unclear/stale standing instruction — that is a
+**hub finding**, not a code issue. You **cannot** fix the hub from here and you must **not** paper over
+it (§1). Log it so the orchestrator fixes the real artifact for every future worktree, then carry on
+with your task using the correct approach:
+
+```powershell
+& <hub>\review-coverage.ps1 hubfind -Worktree <FOLDER> -Category <env|tool|prompt|config|memory|other> `
+    -Title '<short>' -Detail '<what happened, where, and what it should be>' [-Severity <Low|Medium|High>]
+```
+
+This is the hub-level sibling of §5 (Recommended follow-ups): §5 is for out-of-scope problems in the
+**repo**; this is for problems in the **hub's own** prompts/config/scripts/environment.
+
+## 7. Record to the hub ledger (system of record for monitoring + triage)
 
 ```powershell
 & <hub>\review-coverage.ps1 progress  -Worktree <FOLDER> -Status pr-open -Pr <M>
 & <hub>\review-coverage.ps1 recommend -Worktree <FOLDER> -Issue <N> -Title '<title>' -Area '<area>' -Severity '<Low|Medium|High>' -Detail '<what + where + why out of scope>'   # one per follow-up
+& <hub>\review-coverage.ps1 hubfind   -Worktree <FOLDER> -Category <env|tool|prompt|config|memory|other> -Title '<short>' -Detail '<what + where + what it should be>'   # any HUB finding (see §6)
 ```
 
 If you **STOP early**, set the status instead of `pr-open`:
 `progress -Worktree <FOLDER> -Status blocked -Note '<why>'`.
 
-## 7. Environment note
+## 8. Environment note
 
 This worktree usually has **no `.env`** (the hub's base-worktree `.env` may be absent), so live
 external services (database, APIs), `dev`, and `build` commands will typically not run here. Validate
@@ -116,17 +135,17 @@ via **`<verifyCmd>`** (e.g. `pnpm verify` — typecheck + lint) and **unit tests
 Do **not** block on missing secrets; if the fix genuinely cannot be proven without live infrastructure,
 **say so plainly** in your completion report rather than faking a pass.
 
-## 8. Hard constraints
+## 9. Hard constraints
 
 - **Stay scoped** to your issue `#<N>`.
 - **While implementing: include any DB migration in the PR for review only — NEVER apply a migration to
-  production.** Solvers run pre-merge; applying happens only at merge time (section 9).
+  production.** Solvers run pre-merge; applying happens only at merge time (section 10).
 - **NEVER run a headless `claude --print` / `claude -p` session** — it bills outside the subscription
   (real money). All work stays in this interactive window.
 - Push only to **your** branch `<BRANCH>`; never to `<defaultBranch>`, never force-push, never deploy.
 - If the task balloons beyond its scope, write `SPEC.md` + `PLAN.md` and **STOP for review** (section 3).
 
-## 9. Merge → migrate (only if the user explicitly asks YOU to merge)
+## 10. Merge → migrate (only if the user explicitly asks YOU to merge)
 
 You normally don't merge — the hub orchestrator does (full runbook: hub `CLAUDE.md` → "Merging a finished
 PR"). **But if the user explicitly asks *you* to merge this PR, that request also REQUIRES applying the
