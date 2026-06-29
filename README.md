@@ -176,6 +176,7 @@ child worktrees for genuinely large independent pieces. One PR to `main`.
 .\review-coverage.ps1 findings                         # recon finding triage
 .\review-coverage.ps1 recommendations                  # solver follow-up backlog
 .\review-coverage.ps1 hub-findings                     # hub-layer problems (prompt/config/script/env): hubfind logs, hub-resolve closes
+.\review-coverage.ps1 consult                          # record an expert consultation + the decision a worktree made (advisory; observable)
 .\ledger-to-html.ps1                                   # render all open items to an HTML dashboard
 ```
 
