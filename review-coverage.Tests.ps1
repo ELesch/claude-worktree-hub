@@ -114,3 +114,28 @@ Describe 'ledger-to-html includes hub findings' {
         $text | Should -Match 'stale rule about pnpm'
     }
 }
+
+Describe 'verify-rec' {
+    It 'stamps verdict, verified_at, and recalibrated severity onto a recommendation (status stays proposed for still-valid)' {
+        $db = New-TempDb
+        & $script:rc recommend  -DbPath $db -Worktree 'issue-9-x' -Issue 9 -Title 'rec to verify' | Out-Null
+        & $script:rc verify-rec -DbPath $db -Id 1 -Verdict still-valid -Severity High -Note 'still broken' | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT verdict,severity,(verified_at IS NOT NULL),status FROM recommendation WHERE id=1;") |
+            Should -Be 'still-valid|High|1|proposed'
+    }
+    It 'auto-dismisses a recommendation on the already-fixed verdict' {
+        $db = New-TempDb
+        & $script:rc recommend  -DbPath $db -Worktree 'w' -Issue 9 -Title 'moot rec' | Out-Null
+        & $script:rc verify-rec -DbPath $db -Id 1 -Verdict already-fixed -FixedBy 'PR #12' | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT verdict,status FROM recommendation WHERE id=1;") | Should -Be 'already-fixed|dismissed'
+    }
+    It 'throws when -Verdict is missing' {
+        $db = New-TempDb
+        & $script:rc recommend -DbPath $db -Worktree 'w' -Issue 9 -Title 'x' | Out-Null
+        { & $script:rc verify-rec -DbPath $db -Id 1 } | Should -Throw
+    }
+    It 'throws when -Id is missing' {
+        $db = New-TempDb
+        { & $script:rc verify-rec -DbPath $db -Verdict still-valid } | Should -Throw
+    }
+}
