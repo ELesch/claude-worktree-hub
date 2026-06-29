@@ -43,6 +43,7 @@ param(
     [int]$Issue, [string]$Branch, [int]$Pr, [string]$Area, [string]$Note,
     [string]$Verdict, [string]$Scope, [string]$FixedBy, [string]$Confidence, [string]$Related, [string]$DependsOn,
     [string]$Targets, [string]$Reads, [string]$Effort, [string]$Track,   # issue-review fields
+    [int]$MaxIssues = 4, [int]$MaxFiles = 8,                              # issue clusters: per-cluster caps
     [switch]$Unverified, [switch]$Dismiss, [switch]$All,
     [string]$Repo,
     [string]$Target,    # hub-resolve: where the fix landed (prompt|config|script|memory). NB: distinct from -Targets (issue owned-paths).
@@ -87,6 +88,146 @@ function Scalar([string]$sql) {
     return $r
 }
 function NullableInt([int]$v) { if ($v -gt 0) { "$v" } else { 'NULL' } }
+
+# Read-only: compute a grouped-wave PROPOSAL from the ledger (no writes). Returns clusters (file-overlapping
+# approved+simple issues, capped), singletons, not-grouped (complex/no-path), and deferrals, plus lookup maps.
+function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
+    $activeStatuses = "'registered','working','spec-gate','pr-open','blocked'"
+    $sevCase = "CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END"
+
+    # paths owned by an ACTIVE worktree (in-flight) - same semantics as 'issue next'
+    $claimed = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($p in @(& sqlite3 $Db "SELECT DISTINCT t.path FROM issue_target t JOIN worktree w ON w.issue=t.issue_number WHERE t.ownership='owns' AND w.status IN ($activeStatuses);")) {
+        if ($p) { [void]$claimed.Add($p) }
+    }
+
+    # approved issues not already owned by an active worktree, priority-ordered (user-origin, severity, number)
+    $rows = @(& sqlite3 -separator '|' $Db "SELECT number, COALESCE(track,''), origin, COALESCE(severity,'-'), substr(replace(title,'|','/'),1,42) FROM issue WHERE review_status='approved' AND number NOT IN (SELECT issue FROM worktree WHERE issue IS NOT NULL AND status IN ($activeStatuses)) ORDER BY (origin='user') DESC, $sevCase, number;")
+
+    $meta = @{}; $ownPaths = @{}; $rank = @{}
+    $eligible = [System.Collections.Generic.List[int]]::new()
+    $notGrouped = @(); $deferInFlight = @()
+    $idx = 0
+    foreach ($r in $rows) {
+        if (-not $r) { continue }
+        $f = $r -split '\|', 5
+        $num = [int]$f[0]; $track = $f[1]
+        $meta[$num] = [pscustomobject]@{ Origin = $f[2]; Sev = $f[3]; Title = $f[4] }
+        $rank[$num] = $idx; $idx++
+        if ($track -ne 'simple') { $notGrouped += [pscustomobject]@{ Issue = $num; Tag = '[complex]' }; continue }
+        $paths = @(& sqlite3 $Db "SELECT path FROM issue_target WHERE issue_number=$num AND ownership='owns';" | Where-Object { $_ })
+        if (-not $paths.Count) { $notGrouped += [pscustomobject]@{ Issue = $num; Tag = '[no owned paths]' }; continue }
+        $blocked = $null
+        foreach ($p in $paths) { if ($claimed.Contains($p)) { $blocked = $p; break } }
+        if ($blocked) { $deferInFlight += [pscustomobject]@{ Issue = $num; Path = $blocked }; continue }
+        $ownPaths[$num] = $paths
+        [void]$eligible.Add($num)
+    }
+
+    # overlap graph over eligible issues: shared owned path OR depends-on (both endpoints eligible)
+    $adj = @{}
+    foreach ($num in $eligible) { $adj[$num] = [System.Collections.Generic.HashSet[int]]::new() }
+    $byPath = @{}
+    foreach ($num in $eligible) {
+        foreach ($p in $ownPaths[$num]) {
+            if (-not $byPath.ContainsKey($p)) { $byPath[$p] = [System.Collections.Generic.List[int]]::new() }
+            [void]$byPath[$p].Add($num)
+        }
+    }
+    foreach ($p in $byPath.Keys) {
+        $grp = $byPath[$p]
+        foreach ($a in $grp) { foreach ($b in $grp) { if ($a -ne $b) { [void]$adj[$a].Add($b) } } }
+    }
+    $eligSet = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($n in $eligible) { [void]$eligSet.Add($n) }
+    foreach ($num in $eligible) {
+        foreach ($dStr in @(& sqlite3 $Db "SELECT related_number FROM issue_link WHERE issue_number=$num AND kind='depends-on';" | Where-Object { $_ })) {
+            $d = [int]$dStr
+            if ($eligSet.Contains($d)) { [void]$adj[$num].Add($d); [void]$adj[$d].Add($num) }
+        }
+    }
+
+    # connected components (BFS)
+    $seen = [System.Collections.Generic.HashSet[int]]::new()
+    $components = [System.Collections.Generic.List[object]]::new()
+    foreach ($num in $eligible) {
+        if ($seen.Contains($num)) { continue }
+        $comp = [System.Collections.Generic.List[int]]::new()
+        $queue = [System.Collections.Generic.Queue[int]]::new()
+        $queue.Enqueue($num); [void]$seen.Add($num)
+        while ($queue.Count) {
+            $cur = $queue.Dequeue(); [void]$comp.Add($cur)
+            foreach ($nb in $adj[$cur]) { if (-not $seen.Contains($nb)) { [void]$seen.Add($nb); $queue.Enqueue($nb) } }
+        }
+        [void]$components.Add($comp)
+    }
+
+    # caps -> clusters / singletons / over-cap deferrals
+    $ordered = @($components | Sort-Object { ($_ | ForEach-Object { $rank[$_] } | Measure-Object -Minimum).Minimum })
+    $clusters = [System.Collections.Generic.List[object]]::new()
+    $singletons = @(); $deferOverCap = @()
+    foreach ($comp in $ordered) {
+        $members = @($comp | Sort-Object { $rank[$_] })
+        if ($members.Count -le 1) { $singletons += [int]$members[0]; continue }
+        $union = [System.Collections.Generic.HashSet[string]]::new()
+        foreach ($m in $members) { foreach ($p in $ownPaths[$m]) { [void]$union.Add($p) } }
+        if ($members.Count -le $MaxI -and $union.Count -le $MaxF) {
+            [void]$clusters.Add([pscustomobject]@{ Members = $members; Files = @($union); Siblings = @() }); continue
+        }
+        # over a cap: greedily admit highest-priority members within both caps; defer the rest
+        $pick = [System.Collections.Generic.List[int]]::new()
+        $pf = [System.Collections.Generic.HashSet[string]]::new()
+        foreach ($m in $members) {
+            if ($pick.Count -ge $MaxI) { break }
+            $t = [System.Collections.Generic.HashSet[string]]::new($pf)
+            foreach ($p in $ownPaths[$m]) { [void]$t.Add($p) }
+            if ($t.Count -le $MaxF) { [void]$pick.Add($m); $pf = $t }
+        }
+        if (-not $pick.Count) { [void]$pick.Add($members[0]); foreach ($p in $ownPaths[$members[0]]) { [void]$pf.Add($p) } }
+        [void]$clusters.Add([pscustomobject]@{ Members = @($pick); Files = @($pf); Siblings = @() })
+        $ci = $clusters.Count
+        foreach ($m in $members) { if (-not $pick.Contains($m)) { $deferOverCap += [pscustomobject]@{ Issue = $m; Cluster = $ci } } }
+    }
+
+    # advisory siblings: open (proposed) findings/recs matched to a cluster by scope-path (strong) or area (weak)
+    $sib = @()
+    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), COALESCE(scope,''), COALESCE(topic,''), substr(replace(title,'|','/'),1,40) FROM finding WHERE status='proposed';")) {
+        if ($r) { $g = $r -split '\|', 5; $sib += [pscustomobject]@{ Type = 'finding'; Id = [int]$g[0]; Sev = $g[1]; Scope = $g[2]; Area = $g[3]; Title = $g[4] } }
+    }
+    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), COALESCE(scope,''), COALESCE(area,''), substr(replace(title,'|','/'),1,40) FROM recommendation WHERE status='proposed';")) {
+        if ($r) { $g = $r -split '\|', 5; $sib += [pscustomobject]@{ Type = 'rec'; Id = [int]$g[0]; Sev = $g[1]; Scope = $g[2]; Area = $g[3]; Title = $g[4] } }
+    }
+    $sevRank = @{ 'Critical' = 0; 'High' = 1; 'Medium' = 2; 'Low' = 3 }
+    foreach ($cl in $clusters) {
+        $pathNeedles = @(); $dirs = @()
+        foreach ($p in $cl.Files) {
+            $pathNeedles += $p
+            $pathNeedles += (($p -split '[\\/]')[-1])                       # basename
+            if ($p -match '[\\/]') { $dirs += ($p -replace '[\\/][^\\/]*$', '') }   # containing dir
+        }
+        $labelTokens = @()
+        foreach ($m in $cl.Members) {
+            $lab = (& sqlite3 $Db "SELECT COALESCE(labels,'') FROM issue WHERE number=$m;")
+            $labelTokens += @($lab -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        }
+        $areaNeedles = @(@($dirs + $labelTokens) | Where-Object { $_ } | Sort-Object -Unique)
+        $matched = @()
+        foreach ($s in $sib) {
+            $isPath = $false
+            foreach ($n in $pathNeedles) { if ($n -and $s.Scope -like "*$n*") { $isPath = $true; break } }
+            $isArea = $false
+            if (-not $isPath -and $s.Area) { foreach ($n in $areaNeedles) { if ($n -and $s.Area -like "*$n*") { $isArea = $true; break } } }
+            if ($isPath -or $isArea) { $matched += [pscustomobject]@{ Type = $s.Type; Id = $s.Id; Sev = $s.Sev; Title = $s.Title; Why = $(if ($isPath) { 'path' } else { 'area' }) } }
+        }
+        $cl.Siblings = @($matched | Sort-Object @{ e = { if ($sevRank.ContainsKey($_.Sev)) { $sevRank[$_.Sev] } else { 4 } } }, Id)
+    }
+
+    return [pscustomobject]@{
+        Clusters = $clusters; Singletons = $singletons; NotGrouped = $notGrouped
+        DeferOverCap = $deferOverCap; DeferInFlight = $deferInFlight
+        Meta = $meta; OwnPaths = $ownPaths
+    }
+}
 
 switch ($Command) {
 
@@ -594,7 +735,64 @@ LIMIT $lim;
                 }
             }
 
-            default { Write-Host "issue sub-commands: sync | unreviewed | record-review -Id N -Targets 'a;b' [-Reads 'c' -Severity .. -Effort .. -Track simple|complex -Verdict .. -Note .. -Related '1,2' -DependsOn '3'] | list [-Status s] | show -Id N | approve -Id N | dismiss -Id N | next [-N k]" }
+            'clusters' {
+                $maxI = if ($MaxIssues -ge 1) { $MaxIssues } else { 4 }
+                $maxF = if ($MaxFiles  -ge 1) { $MaxFiles  } else { 8 }
+                if ($PSBoundParameters.ContainsKey('MaxIssues') -and $MaxIssues -lt 1) { Write-Host "(-MaxIssues < 1 ignored; using 4)" -ForegroundColor DarkYellow }
+                if ($PSBoundParameters.ContainsKey('MaxFiles')  -and $MaxFiles  -lt 1) { Write-Host "(-MaxFiles < 1 ignored; using 8)"  -ForegroundColor DarkYellow }
+
+                $plan = Get-IssueClusterPlan -Db $db -MaxI $maxI -MaxF $maxF
+                $meta = $plan.Meta; $own = $plan.OwnPaths
+                $clusters = @($plan.Clusters); $singletons = @($plan.Singletons); $notGrouped = @($plan.NotGrouped)
+                $overCap = @($plan.DeferOverCap); $inFlight = @($plan.DeferInFlight)
+                $grouped = (@($clusters | ForEach-Object { @($_.Members).Count }) | Measure-Object -Sum).Sum; if (-not $grouped) { $grouped = 0 }
+                $deferred = $overCap.Count + $inFlight.Count
+
+                Write-Host "=== Proposed grouped waves (approved · simple-track · file-overlap) ===" -ForegroundColor Cyan
+                if (-not $clusters.Count -and -not $singletons.Count -and -not $notGrouped.Count -and -not $deferred) {
+                    Write-Host "  (nothing approved to group or schedule - approve simple-track issues first)" -ForegroundColor Yellow
+                }
+                $ci = 0
+                foreach ($cl in $clusters) {
+                    $ci++
+                    $files = @($cl.Files)
+                    $areaDirs = @($files | ForEach-Object { if ($_ -match '[\\/]') { ($_ -replace '[\\/][^\\/]*$', '') } else { '.' } })
+                    $area = ($areaDirs | Group-Object | Sort-Object Count -Descending | Select-Object -First 1).Name
+                    if (-not $area) { $area = '.' }
+                    Write-Host ("`nCluster {0} - area: {1}  ({2} issues, {3} files)" -f $ci, $area, @($cl.Members).Count, $files.Count) -ForegroundColor Green
+                    foreach ($m in $cl.Members) {
+                        Write-Host ("  #{0,-5} [{1,-10}] {2,-7} owns:{3}  {4}" -f $m, $meta[$m].Origin, $meta[$m].Sev, @($own[$m]).Count, $meta[$m].Title) -ForegroundColor Green
+                    }
+                    Write-Host ("  files: {0}" -f ($files -join ', ')) -ForegroundColor DarkGray
+                    $sibs = @($cl.Siblings)
+                    if ($sibs.Count) {
+                        Write-Host "  advisory siblings (proposed - verify before bundling):" -ForegroundColor DarkGray
+                        foreach ($s in @($sibs | Select-Object -First 5)) {
+                            Write-Host ("    {0,-7} #{1,-5} {2,-4} [{3}]  {4}" -f $s.Type, $s.Id, $s.Sev, $s.Why, $s.Title) -ForegroundColor DarkGray
+                        }
+                        if ($sibs.Count -gt 5) { Write-Host ("    +{0} more - see 'findings' / 'recommendations'" -f ($sibs.Count - 5)) -ForegroundColor DarkGray }
+                    }
+                    Write-Host ("  -> Phase 2 will provision: new-worktree.ps1 -Issues {0}" -f (@($cl.Members) -join ',')) -ForegroundColor DarkCyan
+                }
+                if ($singletons.Count -or $notGrouped.Count) {
+                    Write-Host "`nSingletons (approved, no overlap - use issue next / new-worktree -Issue N):" -ForegroundColor Cyan
+                    foreach ($s in $singletons) {
+                        Write-Host ("  #{0,-5} [{1,-10}] {2,-7} {3}" -f $s, $meta[$s].Origin, $meta[$s].Sev, $meta[$s].Title) -ForegroundColor Gray
+                    }
+                    foreach ($s in $notGrouped) {
+                        Write-Host ("  #{0,-5} [{1,-10}] {2,-7} {3} {4}" -f $s.Issue, $meta[$s.Issue].Origin, $meta[$s.Issue].Sev, $s.Tag, $meta[$s.Issue].Title) -ForegroundColor Gray
+                    }
+                }
+                if ($deferred) {
+                    Write-Host "`nDeferred:" -ForegroundColor Cyan
+                    foreach ($d in $overCap)  { Write-Host ("  #{0} - same area as Cluster {1}, exceeds cap; next wave after it merges" -f $d.Issue, $d.Cluster) -ForegroundColor DarkYellow }
+                    foreach ($d in $inFlight) { Write-Host ("  #{0} - in-flight area (owned path '{1}' held by an active worktree)" -f $d.Issue, $d.Path) -ForegroundColor DarkYellow }
+                }
+
+                Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('orchestrator','issue','clusters','$($clusters.Count) clusters, $grouped grouped issues, $deferred deferred');"
+            }
+
+            default { Write-Host "issue sub-commands: sync | unreviewed | record-review -Id N -Targets 'a;b' [-Reads 'c' -Severity .. -Effort .. -Track simple|complex -Verdict .. -Note .. -Related '1,2' -DependsOn '3'] | list [-Status s] | show -Id N | approve -Id N | dismiss -Id N | next [-N k] | clusters [-MaxIssues 4 -MaxFiles 8]" }
         }
     }
 
@@ -608,6 +806,6 @@ LIMIT $lim;
         Write-Host "             monitor | recommendations [-Status proposed] | file-rec -Id n | dismiss-rec -Id n"
         Write-Host "  issue    : issue sync | issue unreviewed | issue list [-Status s] | issue show -Id N"
         Write-Host "             issue record-review -Id N -Targets 'a;b' [-Reads 'c' -Severity .. -Effort .. -Track simple|complex -Verdict .. -Note .. -Related '1,2' -DependsOn '3']"
-        Write-Host "             issue approve -Id N | issue dismiss -Id N | issue next [-N k]    (review fan-out is orchestrator-driven; gate enforced in new-worktree.ps1)"
+        Write-Host "             issue approve -Id N | issue dismiss -Id N | issue next [-N k] | issue clusters [-MaxIssues 4 -MaxFiles 8]    (review fan-out is orchestrator-driven; gate enforced in new-worktree.ps1)"
     }
 }

@@ -157,6 +157,7 @@ fan-out (one subagent per finding); it writes only verdicts/links to the ledger,
 .\review-coverage.ps1 issue show -Id 7                       # full review detail: owned/read paths + overlapping issues + links
 .\review-coverage.ps1 issue approve -Id 42                   # human checkpoint: reviewed -> approved (clears the worktree gate)
 .\review-coverage.ps1 issue next -N 8                        # the OVERLAP-AWARE selector: highest-priority approved wave, file-disjoint
+.\review-coverage.ps1 issue clusters [-MaxIssues 4 -MaxFiles 8]  # GROUPED-WAVE proposal: bundle approved simple issues that overlap on owned files (capped) + advisory same-area proposed findings/recs (read-only; companion to 'next')
 ```
 Worktree-facing (recon agents call): `activity -Worktree w -WType recon -Event started`,
 `finding -Worktree w -Topic t -Title … -Severity … …`, `complete -Topic t -Worktree w`.

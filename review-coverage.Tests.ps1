@@ -228,3 +228,154 @@ Describe 'halted-unnecessary worktree status' {
         (& $script:rc monitor -DbPath $db | Out-String) | Should -Match 'halted-unnecessary'
     }
 }
+
+Describe 'issue clusters' {
+    It 'prints the header, writes one activity row, and mutates nothing else (empty ledger)' {
+        $db = New-TempDb
+        $before = & sqlite3 $db "SELECT (SELECT count(*) FROM issue)||'/'||(SELECT count(*) FROM activity);"
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Proposed grouped waves'
+        $out | Should -Match 'nothing approved to group'
+        (& sqlite3 $db "SELECT event FROM activity WHERE event='clusters';") | Should -Be 'clusters'
+        (& sqlite3 $db "SELECT count(*) FROM activity;") | Should -Be '1'
+        $before | Should -Be '0/0'   # nothing existed before the run
+    }
+
+    It 'groups two simple approved issues that share an owned file into one cluster' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'page n+1','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(15,'cache pages','approved','simple','recon','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/page-queries.ts','owns'),(15,'src/lib/page-queries.ts','owns');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Cluster 1'
+        $out | Should -Match '#12'
+        $out | Should -Match '#15'
+        $out | Should -Match 'new-worktree.ps1 -Issues 12,15'
+    }
+
+    It 'keeps file-disjoint simple issues as singletons (no cluster)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(20,'a','approved','simple','user','High'),(21,'b','approved','simple','user','Low');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(20,'src/a.ts','owns'),(21,'src/b.ts','owns');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Not -Match 'Cluster 1'
+        $out | Should -Match 'Singletons'
+        $out | Should -Match '#20'
+        $out | Should -Match '#21'
+    }
+
+    It 'does not group a complex issue sharing a file - lists it as a not-grouped singleton' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'simple','approved','simple','user','High'),(20,'big refactor','approved','complex','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/x.ts','owns'),(20,'src/lib/x.ts','owns');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Not -Match 'Cluster 1'           # only one simple issue -> nothing to group
+        $out | Should -Match '#20.*\[complex\]'
+    }
+
+    It 'groups a depends-on pair even with no shared file; ignores a related-only link' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(30,'dep a','approved','simple','user','High'),(31,'dep b','approved','simple','user','High'),(40,'rel a','approved','simple','user','Medium'),(41,'rel b','approved','simple','user','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(30,'src/d1.ts','owns'),(31,'src/d2.ts','owns'),(40,'src/r1.ts','owns'),(41,'src/r2.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_link(issue_number,related_number,kind) VALUES(30,31,'depends-on'),(40,41,'related');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'new-worktree.ps1 -Issues 30,31'   # depends-on grouped
+        $out | Should -Not -Match 'Issues 40,41'                # related NOT grouped
+    }
+
+    It 'caps an over-large component and defers the remainder' {
+        $db = New-TempDb
+        # five simple issues all sharing one hot file -> one component of 5; cap 2 -> cluster of 2, 3 deferred
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(50,'a','approved','simple','user','Critical'),(51,'b','approved','simple','user','High'),(52,'c','approved','simple','recon','Medium'),(53,'d','approved','simple','recon','Low'),(54,'e','approved','simple','recon','Low');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(50,'src/hot.ts','owns'),(51,'src/hot.ts','owns'),(52,'src/hot.ts','owns'),(53,'src/hot.ts','owns'),(54,'src/hot.ts','owns');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db -MaxIssues 2 6>&1) -join "`n"
+        $out | Should -Match 'new-worktree.ps1 -Issues 50,51'   # top-priority 2 admitted
+        $out | Should -Match 'Deferred:'
+        $out | Should -Match '#52.*exceeds cap'
+    }
+
+    It 'defers an issue whose owned path is held by an active worktree (in-flight area)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(30,'touches api','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(30,'src/api/route.ts','owns'),(27,'src/api/route.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('issue-27-x','solver',27,'working');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Deferred:'
+        $out | Should -Match "#30.*in-flight area"
+    }
+
+    It 'attaches a proposed finding whose scope mentions a cluster file (path match)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/page-queries.ts','owns'),(15,'src/lib/page-queries.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('missing index hint','Medium','proposed','needs an index in src/lib/page-queries.ts','app/db');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'advisory siblings'
+        $out | Should -Match 'finding #1.*\[path\]'
+    }
+
+    It 'attaches a proposed recommendation by area token and excludes filed/dismissed rows' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity,labels) VALUES(12,'a','approved','simple','user','High',''),(15,'b','approved','simple','user','Medium','');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/cache.ts','owns'),(15,'src/lib/cache.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO recommendation(title,severity,status,area) VALUES('extract helper','Low','proposed','src/lib');" | Out-Null
+        & sqlite3 $db "INSERT INTO recommendation(title,severity,status,area) VALUES('already filed','High','filed','src/lib');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'rec     #1.*\[area\]'
+        $out | Should -Not -Match 'already filed'
+    }
+
+    It 'shows no advisory siblings when nothing matches' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/x.ts','owns'),(15,'src/lib/x.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('unrelated','High','proposed','src/auth/login.ts','app/auth');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Cluster 1'
+        $out | Should -Not -Match 'advisory siblings'
+    }
+
+    It 'mutates only the activity table (read-only over the backlog)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium'),(20,'c','approved','complex','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/x.ts','owns'),(15,'src/lib/x.ts','owns'),(20,'src/lib/x.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('f','Medium','proposed','src/lib/x.ts','app/db');" | Out-Null
+        & sqlite3 $db "INSERT INTO recommendation(title,severity,status,area) VALUES('r','Low','proposed','src/lib');" | Out-Null
+        $sig = "SELECT (SELECT count(*) FROM issue)||'/'||(SELECT count(*) FROM issue_target)||'/'||(SELECT count(*) FROM finding)||'/'||(SELECT count(*) FROM recommendation)||'/'||(SELECT count(*) FROM worktree)||'|'||COALESCE((SELECT group_concat(status) FROM finding),'')||'|'||COALESCE((SELECT group_concat(status) FROM recommendation),'');"
+        $before = & sqlite3 $db $sig
+        & $script:rc issue clusters -DbPath $db 6>&1 | Out-Null
+        $after = & sqlite3 $db $sig
+        $after | Should -Be $before                                   # backlog rows + statuses unchanged
+        (& sqlite3 $db "SELECT count(*) FROM activity WHERE event='clusters';") | Should -Be '1'
+    }
+
+    It 'lists a simple approved issue with no owned paths as not-grouped ([no owned paths] tag)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(9,'orphan','approved','simple','user','High');" | Out-Null
+        # no issue_target rows for issue 9
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match '#9.*\[no owned paths\]'
+        $out | Should -Not -Match 'Cluster 1'
+    }
+
+    It 'falls back to a 1-member cluster when every member individually exceeds MaxFiles' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(60,'a','approved','simple','user','High'),(61,'b','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(60,'src/hot.ts','owns'),(60,'src/a.ts','owns'),(60,'src/b.ts','owns'),(61,'src/hot.ts','owns'),(61,'src/c.ts','owns'),(61,'src/d.ts','owns');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db -MaxIssues 4 -MaxFiles 2 6>&1) -join "`n"
+        $out | Should -Match 'Cluster 1'
+        $out | Should -Match 'new-worktree.ps1 -Issues 60'   # fallback: top-priority member only
+        $out | Should -Match 'Deferred:'
+        $out | Should -Match '#61.*exceeds cap'
+    }
+
+    It 'matches an advisory sibling by issue-label area token (not just dir)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity,labels) VALUES(12,'a','approved','simple','user','High','database'),(15,'b','approved','simple','user','Medium','');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/data/store.ts','owns'),(15,'src/data/store.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO recommendation(title,severity,status,area) VALUES('split the store','Low','proposed','database');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'advisory siblings'
+        $out | Should -Match 'rec     #1.*\[area\]'
+    }
+}
