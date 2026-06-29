@@ -140,6 +140,10 @@ CREATE TABLE IF NOT EXISTS hubfinding(
   id INTEGER PRIMARY KEY, source TEXT, wtype TEXT, category TEXT, title TEXT NOT NULL, detail TEXT,
   severity TEXT, status TEXT DEFAULT 'open', target TEXT, resolution TEXT,
   created_at TEXT DEFAULT (datetime('now')), resolved_at TEXT);
+CREATE TABLE IF NOT EXISTS consult(
+  id INTEGER PRIMARY KEY, worktree TEXT, wtype TEXT, expert TEXT NOT NULL, area TEXT, issue INTEGER,
+  question TEXT NOT NULL, advice TEXT, decision TEXT, followed TEXT, rationale TEXT,
+  created_at TEXT DEFAULT (datetime('now')));
 CREATE INDEX IF NOT EXISTS ix_activity_at ON activity(at);
 CREATE INDEX IF NOT EXISTS ix_finding_status ON finding(status);
 CREATE INDEX IF NOT EXISTS ix_worktree_status ON worktree(status);
@@ -149,6 +153,7 @@ CREATE INDEX IF NOT EXISTS ix_issue_status ON issue(review_status);
 CREATE INDEX IF NOT EXISTS ix_issue_target_num ON issue_target(issue_number);
 CREATE INDEX IF NOT EXISTS ix_issue_target_path ON issue_target(path);
 CREATE INDEX IF NOT EXISTS ix_hubfinding_status ON hubfinding(status);
+CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
 '@
         # migrate pre-existing DBs: CREATE TABLE IF NOT EXISTS won't add columns to an existing table.
         $verifyCols = [ordered]@{ verdict = 'TEXT'; confidence = 'TEXT'; orig_severity = 'TEXT'; scope = 'TEXT'; fixed_by = 'TEXT'; verify_notes = 'TEXT'; verified_at = 'TEXT'; completed_at = 'TEXT' }

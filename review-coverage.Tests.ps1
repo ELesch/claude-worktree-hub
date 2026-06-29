@@ -139,3 +139,11 @@ Describe 'verify-rec' {
         { & $script:rc verify-rec -DbPath $db -Verdict still-valid } | Should -Throw
     }
 }
+
+Describe 'consult schema' {
+    It 'init creates the consult table with the expected columns' {
+        $db = New-TempDb
+        $cols = (& sqlite3 $db "SELECT name FROM pragma_table_info('consult') ORDER BY name;") -join ','
+        $cols | Should -Be 'advice,area,created_at,decision,expert,followed,id,issue,question,rationale,worktree,wtype'
+    }
+}
