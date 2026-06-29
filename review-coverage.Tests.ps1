@@ -188,3 +188,16 @@ Describe 'monitor shows consults' {
         $out | Should -Match 'hub-observability'
     }
 }
+
+Describe 'ledger-to-html includes consults' {
+    It 'renders a Consults section with a logged decision (no hub.config.json needed)' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-dx-product -Question 'flag name?' -Decision 'use --dry-run' -Followed yes | Out-Null
+        $html = Join-Path $TestDrive 'ledger.html'
+        $renderer = $script:rc.Replace('review-coverage.ps1', 'ledger-to-html.ps1')
+        & $renderer -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
+        $text = Get-Content $html -Raw
+        $text | Should -Match 'Consults'
+        $text | Should -Match 'flag name\?'
+    }
+}
