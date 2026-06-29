@@ -198,6 +198,14 @@ if ($script:installsRan) {
 }
 Invoke-BootstrapPhase
 Invoke-ConfigPhase
+# --- product brief: scaffold PRODUCT.md from the template (grounds the hub-dx-product/hub-principal experts) ---
+$productPath = Join-Path $Hub 'PRODUCT.md'
+$productExample = Join-Path $Hub 'PRODUCT.example.md'
+if ((Test-Path $productExample) -and -not (Test-Path $productPath)) {
+    Write-Note ("{0}Creating PRODUCT.md from PRODUCT.example.md (fill it in so the product/principal experts can ground their advice; worktrees read it live)..." -f $(if($DryRun){'(dry-run) would: '}else{''}))
+    if (-not $DryRun) { Copy-Item $productExample $productPath }
+}
+elseif (Test-Path $productPath) { Write-Note "PRODUCT.md already present." }
 Invoke-EnvPhase
 Invoke-LedgerPhase
 # Capture the doctor's verdict and make the wizard's exit code intentional, so a residual
