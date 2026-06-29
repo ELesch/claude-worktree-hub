@@ -303,4 +303,35 @@ Describe 'issue clusters' {
         $out | Should -Match 'Deferred:'
         $out | Should -Match "#30.*in-flight area"
     }
+
+    It 'attaches a proposed finding whose scope mentions a cluster file (path match)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/page-queries.ts','owns'),(15,'src/lib/page-queries.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('missing index hint','Medium','proposed','needs an index in src/lib/page-queries.ts','app/db');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'advisory siblings'
+        $out | Should -Match 'finding #1.*\[path\]'
+    }
+
+    It 'attaches a proposed recommendation by area token and excludes filed/dismissed rows' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity,labels) VALUES(12,'a','approved','simple','user','High',''),(15,'b','approved','simple','user','Medium','');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/cache.ts','owns'),(15,'src/lib/cache.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO recommendation(title,severity,status,area) VALUES('extract helper','Low','proposed','src/lib');" | Out-Null
+        & sqlite3 $db "INSERT INTO recommendation(title,severity,status,area) VALUES('already filed','High','filed','src/lib');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'rec     #1.*\[area\]'
+        $out | Should -Not -Match 'already filed'
+    }
+
+    It 'shows no advisory siblings when nothing matches' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/x.ts','owns'),(15,'src/lib/x.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('unrelated','High','proposed','src/auth/login.ts','app/auth');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Cluster 1'
+        $out | Should -Not -Match 'advisory siblings'
+    }
 }

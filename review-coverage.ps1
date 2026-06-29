@@ -189,6 +189,39 @@ function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
         foreach ($m in $members) { if (-not $pick.Contains($m)) { $deferOverCap += [pscustomobject]@{ Issue = $m; Cluster = $ci } } }
     }
 
+    # advisory siblings: open (proposed) findings/recs matched to a cluster by scope-path (strong) or area (weak)
+    $sib = @()
+    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), COALESCE(scope,''), COALESCE(topic,''), substr(replace(title,'|','/'),1,40) FROM finding WHERE status='proposed';")) {
+        if ($r) { $g = $r -split '\|', 5; $sib += [pscustomobject]@{ Type = 'finding'; Id = [int]$g[0]; Sev = $g[1]; Scope = $g[2]; Area = $g[3]; Title = $g[4] } }
+    }
+    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), COALESCE(scope,''), COALESCE(area,''), substr(replace(title,'|','/'),1,40) FROM recommendation WHERE status='proposed';")) {
+        if ($r) { $g = $r -split '\|', 5; $sib += [pscustomobject]@{ Type = 'rec'; Id = [int]$g[0]; Sev = $g[1]; Scope = $g[2]; Area = $g[3]; Title = $g[4] } }
+    }
+    $sevRank = @{ 'Critical' = 0; 'High' = 1; 'Medium' = 2; 'Low' = 3 }
+    foreach ($cl in $clusters) {
+        $pathNeedles = @(); $dirs = @()
+        foreach ($p in $cl.Files) {
+            $pathNeedles += $p
+            $pathNeedles += (($p -split '[\\/]')[-1])                       # basename
+            if ($p -match '[\\/]') { $dirs += ($p -replace '[\\/][^\\/]*$', '') }   # containing dir
+        }
+        $labelTokens = @()
+        foreach ($m in $cl.Members) {
+            $lab = (& sqlite3 $Db "SELECT COALESCE(labels,'') FROM issue WHERE number=$m;")
+            $labelTokens += @($lab -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        }
+        $areaNeedles = @(@($dirs + $labelTokens) | Where-Object { $_ } | Sort-Object -Unique)
+        $matched = @()
+        foreach ($s in $sib) {
+            $isPath = $false
+            foreach ($n in $pathNeedles) { if ($n -and $s.Scope -like "*$n*") { $isPath = $true; break } }
+            $isArea = $false
+            if (-not $isPath -and $s.Area) { foreach ($n in $areaNeedles) { if ($n -and $s.Area -like "*$n*") { $isArea = $true; break } } }
+            if ($isPath -or $isArea) { $matched += [pscustomobject]@{ Type = $s.Type; Id = $s.Id; Sev = $s.Sev; Title = $s.Title; Why = $(if ($isPath) { 'path' } else { 'area' }) } }
+        }
+        $cl.Siblings = @($matched | Sort-Object @{ e = { if ($sevRank.ContainsKey($_.Sev)) { $sevRank[$_.Sev] } else { 4 } } }, Id)
+    }
+
     return [pscustomobject]@{
         Clusters = $clusters; Singletons = $singletons; NotGrouped = $notGrouped
         DeferOverCap = $deferOverCap; DeferInFlight = $deferInFlight
