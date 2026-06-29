@@ -136,6 +136,7 @@ fan-out (one subagent per finding); it writes only verdicts/links to the ledger,
 .\review-coverage.ps1 status                                 # recent activity across ALL worktrees
 .\review-coverage.ps1 findings -Unverified                   # the verify QUEUE (proposed findings not yet verified)
 .\review-coverage.ps1 verify -Id 81 -Verdict still-valid -Severity High -Scope '<files+effort>' -Note '<evidence>' [-Related '93' -DependsOn '..' -FixedBy 'PR #N' -Confidence high -Dismiss]
+.\review-coverage.ps1 verify-rec -Id 93 -Verdict already-fixed -FixedBy 'PR #N' -Note '<evidence>' [-Severity Low -Confidence high -Dismiss]   # verify a RECOMMENDATION (same fields as verify; already-fixed/out-of-scope auto-dismiss; no link edges)
 .\review-coverage.ps1 findings ; .\review-coverage.ps1 promote -Id 5   # recon triage (verified) -> file as a GH issue
 .\review-coverage.ps1 resolve -Id 81 -Issue 701              # stamp completed_at + status=completed when the fix merges
 .\review-coverage.ps1 monitor                                # live status of EVERY worktree + pending follow-ups
@@ -603,8 +604,9 @@ Steps when merging a finished PR:
    helper script, or write a memory file — then `hub-resolve -Id <n> -Target <prompt|config|script|memory>
    -Note '<what changed>'` (or `-Dismiss`).
    **Verify anything that has gone unreviewed against the CURRENT code now** — `verify -Id <n> -Verdict
-   <still-valid|already-fixed|partially-fixed|out-of-scope> -Severity .. -Note ..` for a finding (same fields on a
-   rec). Follow-ups go stale FAST: every merge silently fixes or moots some of them, so a batch left even a few
+   <still-valid|already-fixed|partially-fixed|out-of-scope> -Severity .. -Note ..` for a finding, or `verify-rec
+   -Id <n> -Verdict .. [-FixedBy .. -Note ..]` for a recommendation (same verify fields; already-fixed/out-of-scope
+   auto-dismiss). Follow-ups go stale FAST: every merge silently fixes or moots some of them, so a batch left even a few
    days untriaged is routinely ~10% already-fixed/out-of-scope noise. For a big backlog, verification is a cheap
    **read-only fan-out** (one in-session `Agent` subagent per surface/topic, NOT headless `claude`; each reads
    current code/DB and writes only verdicts to the ledger). Then promote the still-valid ones you want worked and
@@ -769,3 +771,18 @@ or the helper scripts — each one cost a debugging cycle.
   `Remove-Item` when the same command contains regex like `[^\]]` (it misreads `\]` as a path and
   blocks the whole command) — use Git Bash `rm -rf` for bulk folder deletes to avoid that.
   "Issue merged" does NOT mean the window is closed.
+- **Force-killed worktree tabs only auto-close if Windows Terminal `closeOnExit` is `"always"`.**
+  `retire-worktree.ps1` and `cleanup-worktree-processes.ps1` end a session with `Stop-Process -Force`, so the
+  tab's shell exits with code `0xFFFFFFFF` (4294967295) — an *abnormal* exit. Windows Terminal's default
+  `closeOnExit: "automatic"` closes a tab only on a **graceful** exit (code 0), so a force-killed tab lingers
+  showing `[process exited with code 4294967295 (0xffffffff)]` instead of closing — and dead tabs pile up after
+  each retire/cleanup. Fix: one line in WT `settings.json` → `profiles.defaults`: `"closeOnExit": "always"`.
+  Safe globally — shells you close yourself with `exit` or the X button still exit 0 and close under either mode.
+- **Launching worktree windows: keep everything *spaced* INSIDE the launcher.** The windowed wrapper is started
+  as `Start-Process pwsh -ArgumentList '-NoExit','-NoProfile','-File',$launcher` — the ONLY things on the outer
+  command line are fixed flags + the launcher path (no spaces); the window **title**, `--name`, and the
+  **prompt** all live inside the generated `.launchers\*.ps1`. Never launch via `wt.exe new-tab --title
+  '<spaced title>' pwsh …`, and never pass a spaced value as a single `Start-Process -ArgumentList` element:
+  `Start-Process` does **not** quote array elements, so a spaced `--title '#42 Auth'` splits and the 2nd word
+  (`Auth`) lands in the command-to-run slot → wt tries to run an exe named `Auth` → error `0x80070002` ("the
+  system cannot find the file specified"). Put the title/name/prompt inside the launcher, not on the outer line.

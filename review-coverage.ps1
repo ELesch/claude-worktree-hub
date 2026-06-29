@@ -294,6 +294,28 @@ CREATE INDEX IF NOT EXISTS ix_hubfinding_status ON hubfinding(status);
         Write-Host "verified finding #$Id -> $Verdict$dis." -ForegroundColor Green
     }
 
+    # verify a RECOMMENDATION (solver out-of-scope follow-up) — same verdict vocabulary + auto-dismiss as
+    # 'verify', but against the recommendation table (which carries the same verify columns). Lets the
+    # orchestrator's verify-before-stale sweep stamp a rec without raw SQL. No link edges: there is no
+    # recommendation_link table (finding_link is findings-only).
+    'verify-rec' {
+        if (-not $Id) { throw "verify-rec requires -Id <recommendation id>" }
+        if (-not $Verdict) { throw "verify-rec requires -Verdict <still-valid|already-fixed|partially-fixed|out-of-scope|needs-info>" }
+        $vw = if ($Worktree) { $Worktree } else { 'orchestrator' }
+        $sets = @("verdict='$(q $Verdict)'", "verified_at=datetime('now')")
+        if ($Confidence) { $sets += "confidence='$(q $Confidence)'" }
+        if ($Scope) { $sets += "scope='$(q $Scope)'" }
+        if ($FixedBy) { $sets += "fixed_by='$(q $FixedBy)'" }
+        if ($Note) { $sets += "verify_notes='$(q $Note)'" }
+        if ($PSBoundParameters.ContainsKey('Severity')) { $sets += "orig_severity=COALESCE(orig_severity,severity)"; $sets += "severity='$(q $Severity)'" }
+        $dismissV = @('already-fixed', 'out-of-scope')
+        if ($Dismiss -or $dismissV -contains $Verdict) { $sets += "status='dismissed'" }
+        Exec "UPDATE recommendation SET $($sets -join ', ') WHERE id=$Id;"
+        Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('$(q $vw)','recon','verify-rec','#$Id -> $(q $Verdict)');"
+        $dis = if ($Dismiss -or $dismissV -contains $Verdict) { ' (dismissed)' } else { '' }
+        Write-Host "verified recommendation #$Id -> $Verdict$dis." -ForegroundColor Green
+    }
+
     'resolve' {
         if (-not $Id) { throw "resolve requires -Id <finding id>" }
         $sets = @("completed_at=datetime('now')", "status='completed'")
