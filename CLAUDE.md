@@ -320,6 +320,19 @@ requirements, real root causes) and fixes the *cause*, not the symptom; if it ca
 plainly. When the gate calls for design docs, require a **proper** SPEC.md + PLAN.md (problem, approach,
 files, risks, test strategy) — never "short".
 
+**Product-necessity gate (stage one) — pick the persona to route.** Every solver runs the stage-one
+product-necessity gate in `WORKTREE.md` (§6a) before coding. When seeding, name the routed persona in the
+prompt (default `hub-product-owner`), chosen from the item's labels/area:
+
+| Issue is about… | Route to |
+|---|---|
+| UX, a11y, error messages, user-facing behavior/copy, onboarding | `hub-product-user` |
+| feature scope, priority, roadmap fit, "should we even build this" | `hub-product-owner` (default) |
+| perf, refactor, tech-debt, deps, observability, tests, internal tooling | `hub-product-maintenance` |
+
+The persona's "Also consult" line lets it pull in a sibling lens; one persona per item is the default.
+User-origin issues are confirmed/right-sized, never auto-halted (the user's request outranks the persona).
+
 The **canonical autonomous (simple-track) solver prompt** — fill `<N>`/`<FOLDER>`/`<BRANCH>` and the
 issue-specific guidance:
 
@@ -332,6 +345,8 @@ Worktree: <FOLDER>   Branch: <BRANCH>
 
 WORKTREE.md (above) is your operating manual — follow it. ISSUE.md (above) is your brief.
 Where WORKTREE.md shows <FOLDER>/<BRANCH>/<N>/<M>, use this worktree's values (<M> = the PR you open).
+
+Stage one (before any code): run the stage-one product-necessity gate in WORKTREE.md — consult <ROUTED PERSONA, default hub-product-owner>, curating the issue + current code + origin + PRODUCT.md, to confirm this is real, necessary, and right-sized. HALT or ask me per that section if it isn't.
 
 Issue-specific steer: <issue-specific guidance>
 
@@ -435,8 +450,9 @@ shows <FOLDER>/<BRANCH>/<N>/<M>, use this worktree's values. The steps below are
 on top of WORKTREE.md; the one rule to internalize is **STOP at the gate (step 3) before writing any code**.
 
 Follow the gated COMPLEX workflow:
+0. STAGE ONE — product-necessity gate (WORKTREE.md §6a): before researching the build, consult <ROUTED PERSONA, default hub-product-owner> (curate issue + current code + origin + PRODUCT.md) to confirm the work is necessary. If not necessary, HALT/ask me and record the consult — do not design a fix for work that isn't worth doing.
 1. RESEARCH the relevant code (use subagents to explore in parallel).
-2. Write SPEC.md (problem, requirements, constraints, acceptance) and PLAN.md (approach, the files
+2. Write SPEC.md (problem, requirements, constraints, acceptance, and a Product necessity section: the persona's verdict + the PRODUCT.md priority it serves) and PLAN.md (approach, the files
    each piece OWNS, risks, tests, and a proposed breakdown into independent pieces).
 3. GATE: present your key decisions + the breakdown, then STOP and wait for my approval/correction
    before writing any implementation code. Mark the gate on the hub monitor so I see you're waiting:
@@ -620,6 +636,7 @@ Steps when merging a finished PR:
    **Improvement loop:** outside the per-merge sweep, periodically review the consult log (which experts on what, the override rate,
    decisions that later correlated with findings/bugs) and use it to sharpen the `.claude\agents\hub-*.md`
    expert prompts. The data is structured so this is a query, not an archaeology dig.
+   This includes the `hub-product-*` reviewer personas: filter to `area='product-necessity'` consults and treat `followed='overridden'` necessity calls (you kept what a persona called unnecessary, or vice-versa) as the signal to sharpen the personas or `PRODUCT.md`.
 
 ### If `database.enabled` (e.g. Supabase): database migration steps
 
