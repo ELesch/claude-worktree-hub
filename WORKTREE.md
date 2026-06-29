@@ -38,7 +38,7 @@ Work to the standard of a **professional app-development team**:
    title (`fix(#<N>): …` / `feat(#<N>): …`) and put **`Fixes #<N>`** in the PR body so the issue auto-closes
    on merge. **DO NOT merge.**
 6. Finish with the **completion report** (section 4) as your **last output**.
-7. **Record to the hub ledger** (section 7).
+7. **Record to the hub ledger** (section 8).
 
 If the fix turns out **larger or more architectural than expected**, switch to the gated track (section 3):
 write a **proper** `SPEC.md` + `PLAN.md` and **STOP for the user's review** before implementing.
@@ -49,8 +49,9 @@ write a **proper** `SPEC.md` + `PLAN.md` and **STOP for the user's review** befo
 2. Write **`SPEC.md`** (problem, requirements, constraints, acceptance) and **`PLAN.md`** (approach, the
    files each piece OWNS, risks, test strategy, and a proposed breakdown into independent pieces). Make
    them **proper**, never "short".
-3. **GATE:** present your key decisions + the breakdown, then **STOP and wait** for the user's
-   approval/correction before writing any implementation code. Mark the gate on the monitor:
+3. **GATE:** first consult the relevant expert(s) on each key design decision (§6) and fold their guidance
+   into `SPEC.md`/`PLAN.md`; then present your key decisions + the breakdown and **STOP and wait** for the
+   user's approval/correction before writing any implementation code. Mark the gate on the monitor:
    `& <hub>\review-coverage.ps1 progress -Worktree <FOLDER> -Status spec-gate`
    (set `-Status working` at the start of step 1, and again after approval).
 4. After approval, **execute**: in-process **subagents are the default** for parallel work. For a
@@ -79,7 +80,8 @@ note, **never hidden**.
   'PR|#<M> <url>  (base <defaultBranch>, NOT merged)',
   'Status|✅ pushed · ✅ PR opened · ⏳ awaiting your review/merge',
   'Recommended follow-ups|<N found — see table below  /  none>',
-  'Hub findings|<N logged this session — see ledger / none>'
+  'Hub findings|<N logged this session — see ledger / none>',
+  'Consults|<N expert consults logged this session — see ledger / none>'
 ```
 
 (Complex track: swap the `Root cause`/`Fix` rows for `Approach` + `Pieces` rows.)
@@ -99,7 +101,44 @@ stay scoped), list them as **recommended follow-up issues** so the user can choo
 
 Real follow-ups only — be specific, don't pad. If none, say "Recommended follow-ups: none."
 
-## 6. Hub findings (problems with these instructions / your environment — not the repo's code)
+## 6. Consulting the experts (get professional, long-term-minded advice on decisions)
+
+This hub provisions a panel of **read-only advisor agents** into your `.claude\agents\` folder
+(`hub-principal` + `hub-architect`, `hub-data`, `hub-observability`, `hub-security`, `hub-dx-product`).
+They think like a professional application-development team and answer one question at a time. They are
+**advisory** — you weigh the advice, **you** decide, and you record the decision.
+
+**When to consult:**
+- **Mandatory at the spec-gate (complex track, §3):** before you STOP to present `SPEC.md`/`PLAN.md`,
+  consult the relevant expert(s) on each key design decision and fold the guidance in.
+- **On-demand (both tracks):** at any consequential fork you are unsure about, consult the fitting
+  expert instead of guessing. `hub-principal` is the default; pull in a specialist for depth.
+
+**How to consult:** invoke the expert **in-process** (the `Agent`/Task tool with `subagent_type: hub-<x>`,
+or `@hub-<x>`). **Curate the question and paste the relevant context** (the decision, the options, the
+constraints, the specific code) INTO the request — do not rely on the expert to go find the right files.
+This is subscription-covered; **never** launch a headless `claude` for this (§10).
+
+**Product context:** when consulting `hub-dx-product` or `hub-principal`, also read the hub's product brief
+at `<hub>\PRODUCT.md` (read it live each time — it is the user's current product thinking) and include the
+relevant parts in your request. If it is absent, say so and proceed.
+
+**Record every consultation** so the decision + rationale is observable (see also §8):
+
+```powershell
+& <hub>\review-coverage.ps1 consult -Worktree <FOLDER> -Expert hub-<x> -Area <area> `
+    -Question '<the decision>' -Advice '<expert recommendation, summarized>' `
+    -Decision '<what you decided>' -Followed <yes|partial|overridden> -Rationale '<why — REQUIRED if overridden>' [-Issue <N>]
+```
+
+**Also put the decisions in your PR.** Append a short `## Design decisions` section to your PR body —
+one line per consult (expert · decision · one-line why) — so the rationale travels with the code for
+human reviewers, not only in the hub ledger.
+
+If the expert files are not present (older worktree), note "experts unavailable" and reason carefully
+yourself rather than blocking.
+
+## 7. Hub findings (problems with these instructions / your environment — not the repo's code)
 
 If a problem is with **how this hub is operating you** rather than with the repo you were sent to fix —
 a command or tool that isn't what the prompt implied, the **wrong terminal assumption** (this hub is
@@ -116,18 +155,19 @@ with your task using the correct approach:
 This is the hub-level sibling of §5 (Recommended follow-ups): §5 is for out-of-scope problems in the
 **repo**; this is for problems in the **hub's own** prompts/config/scripts/environment.
 
-## 7. Record to the hub ledger (system of record for monitoring + triage)
+## 8. Record to the hub ledger (system of record for monitoring + triage)
 
 ```powershell
 & <hub>\review-coverage.ps1 progress  -Worktree <FOLDER> -Status pr-open -Pr <M>
 & <hub>\review-coverage.ps1 recommend -Worktree <FOLDER> -Issue <N> -Title '<title>' -Area '<area>' -Severity '<Low|Medium|High>' -Detail '<what + where + why out of scope>'   # one per follow-up
-& <hub>\review-coverage.ps1 hubfind   -Worktree <FOLDER> -Category <env|tool|prompt|config|memory|other> -Title '<short>' -Detail '<what + where + what it should be>'   # any HUB finding (see §6)
+& <hub>\review-coverage.ps1 hubfind   -Worktree <FOLDER> -Category <env|tool|prompt|config|memory|other> -Title '<short>' -Detail '<what + where + what it should be>'   # any HUB finding (see §7)
+& <hub>\review-coverage.ps1 consult   -Worktree <FOLDER> -Expert hub-<x> -Question '<decision>' -Decision '<what you decided>' -Followed <yes|partial|overridden> [-Area <a> -Advice '<...>' -Rationale '<...>' -Issue <N>]   # each expert consult (see §6)
 ```
 
 If you **STOP early**, set the status instead of `pr-open`:
 `progress -Worktree <FOLDER> -Status blocked -Note '<why>'`.
 
-## 8. Environment note
+## 9. Environment note
 
 This worktree usually has **no `.env`** (the hub's base-worktree `.env` may be absent), so live
 external services (database, APIs), `dev`, and `build` commands will typically not run here. Validate
@@ -135,17 +175,17 @@ via **`<verifyCmd>`** (e.g. `pnpm verify` — typecheck + lint) and **unit tests
 Do **not** block on missing secrets; if the fix genuinely cannot be proven without live infrastructure,
 **say so plainly** in your completion report rather than faking a pass.
 
-## 9. Hard constraints
+## 10. Hard constraints
 
 - **Stay scoped** to your issue `#<N>`.
 - **While implementing: include any DB migration in the PR for review only — NEVER apply a migration to
-  production.** Solvers run pre-merge; applying happens only at merge time (section 10).
+  production.** Solvers run pre-merge; applying happens only at merge time (section 11).
 - **NEVER run a headless `claude --print` / `claude -p` session** — it bills outside the subscription
   (real money). All work stays in this interactive window.
 - Push only to **your** branch `<BRANCH>`; never to `<defaultBranch>`, never force-push, never deploy.
 - If the task balloons beyond its scope, write `SPEC.md` + `PLAN.md` and **STOP for review** (section 3).
 
-## 10. Merge → migrate (only if the user explicitly asks YOU to merge)
+## 11. Merge → migrate (only if the user explicitly asks YOU to merge)
 
 You normally don't merge — the hub orchestrator does (full runbook: hub `CLAUDE.md` → "Merging a finished
 PR"). **But if the user explicitly asks *you* to merge this PR, that request also REQUIRES applying the
