@@ -27,49 +27,57 @@ Work to the standard of a **professional app-development team**:
 
 1. Read **`@ISSUE.md`** (force-included) — the full issue: body, comments, and any screenshots in
    `issue-assets\`. It is your complete, self-contained brief.
-2. Run `<installCmd>` (e.g. `pnpm install` — fresh worktree has no `node_modules`), then mark yourself
+2. **Stage one — product-necessity gate (§6a). Before installing or coding,** read the relevant current code
+   + `<hub>\PRODUCT.md` and consult the routed product persona. **Proceed only if necessary**; otherwise
+   **HALT** or **ask the user** per §6a, and record the consult.
+3. Run `<installCmd>` (e.g. `pnpm install` — fresh worktree has no `node_modules`), then mark yourself
    working on the monitor:
    `& <hub>\review-coverage.ps1 progress -Worktree <FOLDER> -Status working`
-3. Investigate the **root cause**, then implement the fix following repo conventions. (Issue-specific
+4. Investigate the **root cause**, then implement the fix following repo conventions. (Issue-specific
    guidance is in the launch prompt.)
-4. Validate with `<verifyCmd>` (e.g. `pnpm verify` — typecheck + lint) and **run/add tests that genuinely
+5. Validate with `<verifyCmd>` (e.g. `pnpm verify` — typecheck + lint) and **run/add tests that genuinely
    cover the fix**.
-5. Commit, `git push -u origin <BRANCH>`, then open a PR (`gh pr create`, base `<defaultBranch>`). Use a conventional
+6. Commit, `git push -u origin <BRANCH>`, then open a PR (`gh pr create`, base `<defaultBranch>`). Use a conventional
    title (`fix(#<N>): …` / `feat(#<N>): …`) and put **`Fixes #<N>`** in the PR body so the issue auto-closes
    on merge. **DO NOT merge.**
-6. Finish with the **completion report** (section 4) as your **last output**.
-7. **Record to the hub ledger** (section 8).
+7. Finish with the **completion report** (section 4) as your **last output**.
+8. **Record to the hub ledger** (section 8).
 
 If the fix turns out **larger or more architectural than expected**, switch to the gated track (section 3):
 write a **proper** `SPEC.md` + `PLAN.md` and **STOP for the user's review** before implementing.
 
 ## 3. Gated complex workflow (when the task is large / architectural / ambiguous)
 
-1. **Research** the relevant code (use in-process **subagents** to explore in parallel).
-2. Write **`SPEC.md`** (problem, requirements, constraints, acceptance) and **`PLAN.md`** (approach, the
+1. **Stage one — product-necessity gate (§6a):** before researching the build, consult the routed product
+   persona (curate issue + current code + origin + `PRODUCT.md`) to confirm the work is necessary. If not,
+   **HALT/ask** and record the consult — do not design a fix for work that isn't worth doing.
+2. **Research** the relevant code (use in-process **subagents** to explore in parallel).
+3. Write **`SPEC.md`** (problem, requirements, constraints, acceptance, **and a Product necessity section: the persona's verdict + the `PRODUCT.md` priority it serves**) and **`PLAN.md`** (approach, the
    files each piece OWNS, risks, test strategy, and a proposed breakdown into independent pieces). Make
    them **proper**, never "short".
-3. **GATE:** first consult the relevant expert(s) on each key design decision (§6) and fold their guidance
+4. **GATE:** first consult the relevant expert(s) on each key design decision (§6) and fold their guidance
    into `SPEC.md`/`PLAN.md`; then present your key decisions + the breakdown and **STOP and wait** for the
    user's approval/correction before writing any implementation code. Mark the gate on the monitor:
    `& <hub>\review-coverage.ps1 progress -Worktree <FOLDER> -Status spec-gate`
-   (set `-Status working` at the start of step 1, and again after approval).
-4. After approval, **execute**: in-process **subagents are the default** for parallel work. For a
+   (set `-Status working` at the start of step 2, and again after approval).
+5. After approval, **execute**: in-process **subagents are the default** for parallel work. For a
    genuinely large, independent, file-disjoint piece, spawn a **child worktree**:
    `& <hub>\spawn-child.ps1 -Parent <FOLDER> -Name <piece> -Title "<tab>" -Task "<brief>" [-Complex]`
    Commit a clean baseline first (the helper refuses a dirty parent). Children PR into **your** branch;
    you assemble them and open the **single** PR to `<defaultBranch>`. Respect the depth (2) and siblings (6) caps.
-5. Validate (`<verifyCmd>` + tests), open your PR to `<defaultBranch>`, **do NOT merge**, then report + record.
+6. Validate (`<verifyCmd>` + tests), open your PR to `<defaultBranch>`, **do NOT merge**, then report + record.
 
 ## 4. Completion report (always — your LAST output)
 
 Render it with the shared box-table tool so every worktree looks identical. Fill **every** field and be
 **HONEST** — ✅ pass · ❌ fail/blocked · ⚠️ partial. A red verify or a known gap shows as ❌/⚠️ with a
 note, **never hidden**.
+On a stage-one HALT, the report's shape changes: `Status` = `⛔ halted — not necessary (recommend closing #<N>)`, `PR` = `none`, and the `Necessity` row carries the reasoning.
 
 ```powershell
 & <hub>\format-report.ps1 -Title 'Issue #<N> "<short title>" - completion' -Rows `
   'Issue|#<N> - <one-line what was asked>',
+  'Necessity|<persona> · <necessary|borderline|not-necessary> (<confidence>) - <one-line product rationale>',
   'Root cause|<one line: the actual cause you found>',
   'Fix|<one line: what you changed and why>',
   'Changes|<N> file(s): <key files touched>',
@@ -108,6 +116,10 @@ This hub provisions a panel of **read-only advisor agents** into your `.claude\a
 They think like a professional application-development team and answer one question at a time. They are
 **advisory** — you weigh the advice, **you** decide, and you record the decision.
 
+The panel also includes three **`hub-product-*` reviewers** (`hub-product-owner` / `hub-product-user` /
+`hub-product-maintenance`); unlike the advisors above, they drive the **mandatory stage-one product-necessity
+gate** you run before writing any fix code — see **§6a**.
+
 **When to consult:**
 - **Mandatory at the spec-gate (complex track, §3):** before you STOP to present `SPEC.md`/`PLAN.md`,
   consult the relevant expert(s) on each key design decision and fold the guidance in.
@@ -138,6 +150,48 @@ human reviewers, not only in the hub ledger.
 If the expert files are not present (older worktree), note "experts unavailable" and reason carefully
 yourself rather than blocking.
 
+### 6a. Product-necessity reviewers — the stage-one gate (run FIRST, before any fix code)
+
+Three read-only **product-reviewer personas** are also provisioned into your `.claude\agents\`:
+
+- `hub-product-owner` *(default)* — does this advance a `PRODUCT.md` priority / the roadmap, or gold-plate a non-goal?
+- `hub-product-user` — would a real user of this app notice, care, or be blocked?
+- `hub-product-maintenance` — cost of inaction (tickets, on-call, tech-debt interest) vs. the fix's scope?
+
+**This gate is mandatory and runs before you install or write any code** (it is step 2 of §2 / step 1 of §3):
+
+1. From `@ISSUE.md` + the relevant **current code**, establish the facts: is the problem still real, and the rough scope.
+2. Read `<hub>\PRODUCT.md` live, then **consult the routed persona in-process** (the `Agent`/Task tool with
+   `subagent_type: hub-product-<x>`, or `@hub-product-<x>`; default `hub-product-owner` unless your launch
+   prompt names another). **Curate the request:** paste in the issue, the relevant code/evidence, your draft
+   scope, the issue's **origin** (user / recon / recommendation), and the relevant `PRODUCT.md` parts — do
+   NOT rely on the persona reading your files. It returns: legitimacy · necessity (+confidence) · scope · recommendation.
+3. Act on the verdict:
+   - **necessary** → proceed with your track.
+   - **not-necessary at HIGH confidence** *(recon/recommendation origin)* → **HALT.** Do not install or write
+     code. Set status `halted-unnecessary`, record the consult, and produce your completion report (§4)
+     recommending the user **close #<N>**. Do **not** close the issue yourself. (User-origin issues are never
+     auto-HALTed — see step 4.)
+   - **borderline, not-necessary at medium/low confidence, already-fixed/out-of-scope, or needs-info** →
+     **STOP and ask the user** (set status `spec-gate`): present the verdict and wait. Record the consult
+     **and the user's choice**.
+4. **Calibrate by origin:** if the issue is **user-origin** (the user filed/approved it), **never auto-HALT**.
+   A **necessary** verdict → confirm and right-size the scope, then proceed. If the persona nonetheless calls it
+   **not-necessary**, do **not** HALT and do **not** silently drop it — **route to the user gate** (STOP and ask,
+   status `spec-gate`); the user's own request outranks the persona, and only the user can drop it. Weigh
+   "should we do this at all" only for recon/recommendation-origin items.
+5. **Record it** (system of record + refinement loop) — and, when you proceed, also summarize the verdict in
+   your PR's `## Design decisions` section like any other consult:
+   ```powershell
+   & <hub>\review-coverage.ps1 consult -Worktree <FOLDER> -Expert hub-product-<x> -Area product-necessity `
+       -Issue <N> -Question '<the necessity call>' -Advice '<verdict: legitimacy · necessity+confidence · scope · rec>' `
+       -Decision '<proceed | halted — not necessary | gated → user chose X>' `
+       -Followed <yes|partial|overridden> -Rationale '<why — REQUIRED on override>'
+   ```
+
+If the persona files are absent (older worktree), note "product reviewers unavailable", reason from
+`PRODUCT.md` yourself, and proceed — don't block.
+
 ## 7. Hub findings (problems with these instructions / your environment — not the repo's code)
 
 If a problem is with **how this hub is operating you** rather than with the repo you were sent to fix —
@@ -164,8 +218,10 @@ This is the hub-level sibling of §5 (Recommended follow-ups): §5 is for out-of
 & <hub>\review-coverage.ps1 consult   -Worktree <FOLDER> -Expert hub-<x> -Question '<decision>' -Decision '<what you decided>' -Followed <yes|partial|overridden> [-Area <a> -Advice '<...>' -Rationale '<...>' -Issue <N>]   # each expert consult (see §6)
 ```
 
-If you **STOP early**, set the status instead of `pr-open`:
-`progress -Worktree <FOLDER> -Status blocked -Note '<why>'`.
+If you **STOP early**, set the status instead of `pr-open` — pick the one that fits: `halted-unnecessary` when
+the §6a product gate auto-halted the work, `spec-gate` when waiting at a gate for the user, or `blocked` when
+stuck on an external dependency:
+`progress -Worktree <FOLDER> -Status <halted-unnecessary|spec-gate|blocked> -Note '<why>'`.
 
 ## 9. Environment note
 
