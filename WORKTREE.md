@@ -116,6 +116,10 @@ This hub provisions a panel of **read-only advisor agents** into your `.claude\a
 They think like a professional application-development team and answer one question at a time. They are
 **advisory** — you weigh the advice, **you** decide, and you record the decision.
 
+The panel also includes three **`hub-product-*` reviewers** (`hub-product-owner` / `hub-product-user` /
+`hub-product-maintenance`); unlike the advisors above, they drive the **mandatory stage-one product-necessity
+gate** you run before writing any fix code — see **§6a**.
+
 **When to consult:**
 - **Mandatory at the spec-gate (complex track, §3):** before you STOP to present `SPEC.md`/`PLAN.md`,
   consult the relevant expert(s) on each key design decision and fold the guidance in.

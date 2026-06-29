@@ -471,6 +471,7 @@ Follow the gated COMPLEX workflow:
    worktree uses; fill every field honestly - ✅/❌/⚠️):
        & <hub root>\format-report.ps1 -Title 'Issue #<N> "<short title>" - completion' -Rows `
          'Issue|#<N> - <one-line what was asked>',
+         'Necessity|<persona> · <necessary|borderline|not-necessary> (<confidence>) - <one-line product rationale>',
          'Approach|<one line: the design you gated + built>',
          'Pieces|<subagents / child worktrees used, if any>',
          'Changes|<N> file(s): <key areas touched>',
