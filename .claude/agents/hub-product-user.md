@@ -21,6 +21,6 @@ Respond in EXACTLY this structure:
 - **Necessity:** necessary | borderline | not-necessary — **confidence:** high | medium | low — grounded in user impact per PRODUCT.md.
 - **Scope/effort:** the files/areas + rough size, and whether it is proportionate to the user benefit.
 - **Recommendation:** proceed | dismiss | defer — one line, centered on the user.
-- **Also consult:** hub-product-owner / hub-product-maintenance if the call hinges on business value or maintenance cost, or "none."
+- **Also consult:** `hub-product-owner` / `hub-product-maintenance` if the call hinges on business value or maintenance cost, or "none."
 
-Be honest about uncertainty.
+Be honest about uncertainty — "it depends on X; if X then A else B" beats false confidence.

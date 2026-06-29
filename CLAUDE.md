@@ -328,9 +328,9 @@ prompt (default `hub-product-owner`), chosen from the item's labels/area:
 |---|---|
 | UX, a11y, error messages, user-facing behavior/copy, onboarding | `hub-product-user` |
 | feature scope, priority, roadmap fit, "should we even build this" | `hub-product-owner` (default) |
-| perf, refactor, tech-debt, deps, observability, tests, internal tooling | `hub-product-maintenance` |
+| perf, refactor, tech-debt, security, deps, observability, tests, internal tooling | `hub-product-maintenance` |
 
-The persona's "Also consult" line lets it pull in a sibling lens; one persona per item is the default.
+The routed persona's response includes an "Also consult" field when a sibling lens is warranted; the worktree runs that follow-up. One persona per item is the default.
 User-origin issues are confirmed/right-sized, never auto-halted (the user's request outranks the persona).
 
 The **canonical autonomous (simple-track) solver prompt** — fill `<N>`/`<FOLDER>`/`<BRANCH>` and the
@@ -637,7 +637,7 @@ Steps when merging a finished PR:
    **Improvement loop:** outside the per-merge sweep, periodically review the consult log (which experts on what, the override rate,
    decisions that later correlated with findings/bugs) and use it to sharpen the `.claude\agents\hub-*.md`
    expert prompts. The data is structured so this is a query, not an archaeology dig.
-   This includes the `hub-product-*` reviewer personas: filter to `area='product-necessity'` consults and treat `followed='overridden'` necessity calls (you kept what a persona called unnecessary, or vice-versa) as the signal to sharpen the personas or `PRODUCT.md`.
+   This includes the `hub-product-*` reviewer personas: filter to `area='product-necessity'` consults and treat `followed='overridden'` necessity calls (you proceeded despite a not-necessary verdict, or dropped one a persona thought necessary) as the signal to sharpen the personas or `PRODUCT.md`.
 
 ### If `database.enabled` (e.g. Supabase): database migration steps
 

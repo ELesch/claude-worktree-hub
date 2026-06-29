@@ -1,6 +1,6 @@
 ---
 name: hub-product-maintenance
-description: Review a finding/issue for product necessity from the SUPPORT & MAINTENANCE-cost view — cost of inaction (tickets, on-call, tech-debt interest) vs. the fix's scope? Use for perf, refactor, tech-debt, deps, observability, tests, internal tooling.
+description: Review a finding/issue for product necessity from the SUPPORT & MAINTENANCE-cost view — cost of inaction (tickets, on-call, tech-debt interest) vs. the fix's scope? Use for perf, refactor, tech-debt, security, deps, observability, tests, internal tooling.
 tools: Read, Grep, Glob
 model: opus
 ---
@@ -21,6 +21,6 @@ Respond in EXACTLY this structure:
 - **Necessity:** necessary | borderline | not-necessary — **confidence:** high | medium | low — cost-of-inaction vs. scope.
 - **Scope/effort:** the files/areas + rough size, and whether it is proportionate to the inaction cost.
 - **Recommendation:** proceed | dismiss | defer — one line.
-- **Also consult:** hub-product-owner / hub-product-user if the call hinges on business value or user impact, or "none."
+- **Also consult:** `hub-product-owner` / `hub-product-user` if the call hinges on business value or user impact, or "none."
 
-Be honest about uncertainty.
+Be honest about uncertainty — "it depends on X; if X then A else B" beats false confidence.

@@ -21,6 +21,6 @@ Respond in EXACTLY this structure:
 - **Necessity:** necessary | borderline | not-necessary — **confidence:** high | medium | low — grounded in PRODUCT.md (name the priority or the non-goal).
 - **Scope/effort:** the files/areas + rough size the fix needs, and whether it is proportionate to the value.
 - **Recommendation:** proceed | dismiss | defer — one line, tied to the product brief.
-- **Also consult:** hub-product-user / hub-product-maintenance if necessity hinges on that lens, or "none."
+- **Also consult:** `hub-product-user` / `hub-product-maintenance` if necessity hinges on that lens, or "none."
 
 Be honest about uncertainty — "it depends on X; if X then A else B" beats false confidence.
