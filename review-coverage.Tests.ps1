@@ -147,3 +147,34 @@ Describe 'consult schema' {
         $cols | Should -Be 'advice,area,created_at,decision,expert,followed,id,issue,question,rationale,worktree,wtype'
     }
 }
+
+Describe 'consult verb' {
+    It 'records a consultation with expert, area, issue, followed' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'issue-9-x' -Expert hub-architect -Area architecture -Question 'where does the cache layer live?' -Advice 'behind the repository interface' -Decision 'cache in the repository' -Followed yes -Issue 9 | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT worktree,expert,area,issue,followed FROM consult WHERE id=1;") | Should -Be 'issue-9-x|hub-architect|architecture|9|yes'
+    }
+    It 'captures an override with its rationale' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-data -Question 'normalize tags?' -Advice 'separate tags table' -Decision 'inline JSON for now' -Followed overridden -Rationale 'YAGNI; under 100 rows expected' | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT followed,rationale FROM consult WHERE id=1;") | Should -Be 'overridden|YAGNI; under 100 rows expected'
+    }
+    It 'writes an activity row for the live feed' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-security -Question 'sanitize this input?' | Out-Null
+        (& sqlite3 $db "SELECT event FROM activity WHERE worktree='w' AND event='consult';") | Should -Be 'consult'
+        (& sqlite3 $db "SELECT detail FROM activity WHERE worktree='w' AND event='consult';") | Should -Be 'hub-security: sanitize this input?'
+    }
+    It 'throws when -Worktree is missing' {
+        $db = New-TempDb
+        { & $script:rc consult -DbPath $db -Expert hub-architect -Question 'q' } | Should -Throw
+    }
+    It 'throws when -Expert is missing' {
+        $db = New-TempDb
+        { & $script:rc consult -DbPath $db -Worktree 'w' -Question 'q only' } | Should -Throw
+    }
+    It 'throws when -Question is missing' {
+        $db = New-TempDb
+        { & $script:rc consult -DbPath $db -Worktree 'w' -Expert hub-architect } | Should -Throw
+    }
+}

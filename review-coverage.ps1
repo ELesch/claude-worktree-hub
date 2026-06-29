@@ -47,6 +47,7 @@ param(
     [string]$Repo,
     [string]$Target,    # hub-resolve: where the fix landed (prompt|config|script|memory). NB: distinct from -Targets (issue owned-paths).
     [string]$DbPath,    # override the ledger path (tests / pre-bootstrap); default <hub>\.review\coverage.db
+    [string]$Expert, [string]$Question, [string]$Advice, [string]$Decision, [string]$Followed, [string]$Rationale,   # consult fields (-Followed: yes|partial|overridden)
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
@@ -422,6 +423,15 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
             Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('orchestrator','hub','hub-resolve','#$Id -> $(q $Target)');"
             Write-Host "hub finding #$Id resolved (fixed in $Target)." -ForegroundColor Green
         }
+    }
+
+    # ---- expert consultation: a worktree records the advice it got from a hub-* expert + the decision it made ----
+    'consult' {
+        if (-not $Worktree -or -not $Expert -or -not $Question) { throw "consult requires -Worktree, -Expert (hub-<x>), and -Question; use -Area, -Advice, -Decision, -Followed <yes|partial|overridden>, -Rationale, -Issue" }
+        $wt = q $Worktree
+        Exec "INSERT INTO consult(worktree,wtype,expert,area,issue,question,advice,decision,followed,rationale) VALUES('$wt',COALESCE((SELECT wtype FROM worktree WHERE name='$wt'),'solver'),'$(q $Expert)','$(q $Area)',$(NullableInt $Issue),'$(q $Question)','$(q $Advice)','$(q $Decision)','$(q $Followed)','$(q $Rationale)');"
+        Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('$wt',COALESCE((SELECT wtype FROM worktree WHERE name='$wt'),'solver'),'consult','$(q $Expert): $(q $Question)');"
+        Write-Host "consult recorded: $Expert ($(if ($Followed) { $Followed } else { 'noted' }))" -ForegroundColor Green
     }
 
     # ---- issue lane: GH issue -> ledger -> review (orchestrator subagent fan-out) -> approve -> overlap-aware deploy ----
