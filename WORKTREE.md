@@ -59,7 +59,7 @@ write a **proper** `SPEC.md` + `PLAN.md` and **STOP for the user's review** befo
    into `SPEC.md`/`PLAN.md`; then present your key decisions + the breakdown and **STOP and wait** for the
    user's approval/correction before writing any implementation code. Mark the gate on the monitor:
    `& <hub>\review-coverage.ps1 progress -Worktree <FOLDER> -Status spec-gate`
-   (set `-Status working` at the start of step 1, and again after approval).
+   (set `-Status working` at the start of step 2, and again after approval).
 5. After approval, **execute**: in-process **subagents are the default** for parallel work. For a
    genuinely large, independent, file-disjoint piece, spawn a **child worktree**:
    `& <hub>\spawn-child.ps1 -Parent <FOLDER> -Name <piece> -Title "<tab>" -Task "<brief>" [-Complex]`
