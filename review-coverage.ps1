@@ -43,6 +43,7 @@ param(
     [int]$Issue, [string]$Branch, [int]$Pr, [string]$Area, [string]$Note,
     [string]$Verdict, [string]$Scope, [string]$FixedBy, [string]$Confidence, [string]$Related, [string]$DependsOn,
     [string]$Targets, [string]$Reads, [string]$Effort, [string]$Track,   # issue-review fields
+    [int]$MaxIssues = 4, [int]$MaxFiles = 8,                              # issue clusters: per-cluster caps
     [switch]$Unverified, [switch]$Dismiss, [switch]$All,
     [string]$Repo,
     [string]$Target,    # hub-resolve: where the fix landed (prompt|config|script|memory). NB: distinct from -Targets (issue owned-paths).
@@ -87,6 +88,16 @@ function Scalar([string]$sql) {
     return $r
 }
 function NullableInt([int]$v) { if ($v -gt 0) { "$v" } else { 'NULL' } }
+
+# Read-only: compute a grouped-wave PROPOSAL from the ledger (no writes). Returns clusters (file-overlapping
+# approved+simple issues, capped), singletons, not-grouped (complex/no-path), and deferrals, plus lookup maps.
+function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
+    # Task 1 stub — filled in by Tasks 2 (compute) and 3 (siblings).
+    return [pscustomobject]@{
+        Clusters = @(); Singletons = @(); NotGrouped = @()
+        DeferOverCap = @(); DeferInFlight = @(); Meta = @{}; OwnPaths = @{}
+    }
+}
 
 switch ($Command) {
 
@@ -594,7 +605,64 @@ LIMIT $lim;
                 }
             }
 
-            default { Write-Host "issue sub-commands: sync | unreviewed | record-review -Id N -Targets 'a;b' [-Reads 'c' -Severity .. -Effort .. -Track simple|complex -Verdict .. -Note .. -Related '1,2' -DependsOn '3'] | list [-Status s] | show -Id N | approve -Id N | dismiss -Id N | next [-N k]" }
+            'clusters' {
+                $maxI = if ($MaxIssues -ge 1) { $MaxIssues } else { 4 }
+                $maxF = if ($MaxFiles  -ge 1) { $MaxFiles  } else { 8 }
+                if ($PSBoundParameters.ContainsKey('MaxIssues') -and $MaxIssues -lt 1) { Write-Host "(-MaxIssues < 1 ignored; using 4)" -ForegroundColor DarkYellow }
+                if ($PSBoundParameters.ContainsKey('MaxFiles')  -and $MaxFiles  -lt 1) { Write-Host "(-MaxFiles < 1 ignored; using 8)"  -ForegroundColor DarkYellow }
+
+                $plan = Get-IssueClusterPlan -Db $db -MaxI $maxI -MaxF $maxF
+                $meta = $plan.Meta; $own = $plan.OwnPaths
+                $clusters = @($plan.Clusters); $singletons = @($plan.Singletons); $notGrouped = @($plan.NotGrouped)
+                $overCap = @($plan.DeferOverCap); $inFlight = @($plan.DeferInFlight)
+                $grouped = (@($clusters | ForEach-Object { @($_.Members).Count }) | Measure-Object -Sum).Sum; if (-not $grouped) { $grouped = 0 }
+                $deferred = $overCap.Count + $inFlight.Count
+
+                Write-Host "=== Proposed grouped waves (approved · simple-track · file-overlap) ===" -ForegroundColor Cyan
+                if (-not $clusters.Count -and -not $singletons.Count -and -not $notGrouped.Count -and -not $deferred) {
+                    Write-Host "  (nothing approved to group or schedule - approve simple-track issues first)" -ForegroundColor Yellow
+                }
+                $ci = 0
+                foreach ($cl in $clusters) {
+                    $ci++
+                    $files = @($cl.Files)
+                    $areaDirs = @($files | ForEach-Object { if ($_ -match '[\\/]') { ($_ -replace '[\\/][^\\/]*$', '') } else { '.' } })
+                    $area = ($areaDirs | Group-Object | Sort-Object Count -Descending | Select-Object -First 1).Name
+                    if (-not $area) { $area = '.' }
+                    Write-Host ("`nCluster {0} - area: {1}  ({2} issues, {3} files)" -f $ci, $area, @($cl.Members).Count, $files.Count) -ForegroundColor Green
+                    foreach ($m in $cl.Members) {
+                        Write-Host ("  #{0,-5} [{1,-10}] {2,-7} owns:{3}  {4}" -f $m, $meta[$m].Origin, $meta[$m].Sev, @($own[$m]).Count, $meta[$m].Title) -ForegroundColor Green
+                    }
+                    Write-Host ("  files: {0}" -f ($files -join ', ')) -ForegroundColor DarkGray
+                    $sibs = @($cl.Siblings)
+                    if ($sibs.Count) {
+                        Write-Host "  advisory siblings (proposed - verify before bundling):" -ForegroundColor DarkGray
+                        foreach ($s in @($sibs | Select-Object -First 5)) {
+                            Write-Host ("    {0,-7} #{1,-5} {2,-4} [{3}]  {4}" -f $s.Type, $s.Id, $s.Sev, $s.Why, $s.Title) -ForegroundColor DarkGray
+                        }
+                        if ($sibs.Count -gt 5) { Write-Host ("    +{0} more - see 'findings' / 'recommendations'" -f ($sibs.Count - 5)) -ForegroundColor DarkGray }
+                    }
+                    Write-Host ("  -> Phase 2 will provision: new-worktree.ps1 -Issues {0}" -f (@($cl.Members) -join ',')) -ForegroundColor DarkCyan
+                }
+                if ($singletons.Count -or $notGrouped.Count) {
+                    Write-Host "`nSingletons (approved, no overlap - use issue next / new-worktree -Issue N):" -ForegroundColor Cyan
+                    foreach ($s in $singletons) {
+                        Write-Host ("  #{0,-5} [{1,-10}] {2,-7} {3}" -f $s, $meta[$s].Origin, $meta[$s].Sev, $meta[$s].Title) -ForegroundColor Gray
+                    }
+                    foreach ($s in $notGrouped) {
+                        Write-Host ("  #{0,-5} [{1,-10}] {2,-7} {3} {4}" -f $s.Issue, $meta[$s.Issue].Origin, $meta[$s.Issue].Sev, $s.Tag, $meta[$s.Issue].Title) -ForegroundColor Gray
+                    }
+                }
+                if ($deferred) {
+                    Write-Host "`nDeferred:" -ForegroundColor Cyan
+                    foreach ($d in $overCap)  { Write-Host ("  #{0} - same area as Cluster {1}, exceeds cap; next wave after it merges" -f $d.Issue, $d.Cluster) -ForegroundColor DarkYellow }
+                    foreach ($d in $inFlight) { Write-Host ("  #{0} - in-flight area (owned path '{1}' held by an active worktree)" -f $d.Issue, $d.Path) -ForegroundColor DarkYellow }
+                }
+
+                Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('orchestrator','issue','clusters','$($clusters.Count) clusters, $grouped grouped issues, $deferred deferred');"
+            }
+
+            default { Write-Host "issue sub-commands: sync | unreviewed | record-review -Id N -Targets 'a;b' [-Reads 'c' -Severity .. -Effort .. -Track simple|complex -Verdict .. -Note .. -Related '1,2' -DependsOn '3'] | list [-Status s] | show -Id N | approve -Id N | dismiss -Id N | next [-N k] | clusters [-MaxIssues 4 -MaxFiles 8]" }
         }
     }
 
@@ -608,6 +676,6 @@ LIMIT $lim;
         Write-Host "             monitor | recommendations [-Status proposed] | file-rec -Id n | dismiss-rec -Id n"
         Write-Host "  issue    : issue sync | issue unreviewed | issue list [-Status s] | issue show -Id N"
         Write-Host "             issue record-review -Id N -Targets 'a;b' [-Reads 'c' -Severity .. -Effort .. -Track simple|complex -Verdict .. -Note .. -Related '1,2' -DependsOn '3']"
-        Write-Host "             issue approve -Id N | issue dismiss -Id N | issue next [-N k]    (review fan-out is orchestrator-driven; gate enforced in new-worktree.ps1)"
+        Write-Host "             issue approve -Id N | issue dismiss -Id N | issue next [-N k] | issue clusters [-MaxIssues 4 -MaxFiles 8]    (review fan-out is orchestrator-driven; gate enforced in new-worktree.ps1)"
     }
 }

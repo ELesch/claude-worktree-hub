@@ -228,3 +228,16 @@ Describe 'halted-unnecessary worktree status' {
         (& $script:rc monitor -DbPath $db | Out-String) | Should -Match 'halted-unnecessary'
     }
 }
+
+Describe 'issue clusters' {
+    It 'prints the header, writes one activity row, and mutates nothing else (empty ledger)' {
+        $db = New-TempDb
+        $before = & sqlite3 $db "SELECT (SELECT count(*) FROM issue)||'/'||(SELECT count(*) FROM activity);"
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Proposed grouped waves'
+        $out | Should -Match 'nothing approved to group'
+        (& sqlite3 $db "SELECT event FROM activity WHERE event='clusters';") | Should -Be 'clusters'
+        (& sqlite3 $db "SELECT count(*) FROM activity;") | Should -Be '1'
+        $before | Should -Be '0/0'   # nothing existed before the run
+    }
+}
