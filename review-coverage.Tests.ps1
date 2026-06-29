@@ -201,3 +201,30 @@ Describe 'ledger-to-html includes consults' {
         $text | Should -Match 'flag name\?'
     }
 }
+
+Describe 'product-necessity consult convention' {
+    It 'records a hub-product persona review under area=product-necessity' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'issue-42-x' -Expert hub-product-owner -Area product-necessity `
+            -Question 'Is #42 necessary for the product?' -Advice 'necessary, high' -Decision 'proceed' -Followed yes -Issue 42 | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT expert,area,followed,issue FROM consult WHERE id=1;") |
+            Should -Be 'hub-product-owner|product-necessity|yes|42'
+    }
+    It 'captures a human override of a not-necessary verdict (the refinement signal)' {
+        $db = New-TempDb
+        & $script:rc consult -DbPath $db -Worktree 'issue-7-x' -Expert hub-product-owner -Area product-necessity `
+            -Question 'Is #7 necessary?' -Advice 'not-necessary, high' -Decision 'user chose proceed' `
+            -Followed overridden -Rationale 'user wants it for a launch demo' -Issue 7 | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT followed,rationale FROM consult WHERE id=1;") |
+            Should -Be 'overridden|user wants it for a launch demo'
+    }
+}
+
+Describe 'halted-unnecessary worktree status' {
+    It 'progress records halted-unnecessary and it surfaces in monitor' {
+        $db = New-TempDb
+        & $script:rc progress -DbPath $db -Worktree 'issue-42-x' -Status halted-unnecessary -Note 'not necessary (recommend close)' | Out-Null
+        (& sqlite3 $db "SELECT status FROM worktree WHERE name='issue-42-x';") | Should -Be 'halted-unnecessary'
+        (& $script:rc monitor -DbPath $db | Out-String) | Should -Match 'halted-unnecessary'
+    }
+}
