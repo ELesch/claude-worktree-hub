@@ -56,6 +56,7 @@ Seven units, each independently understandable/testable:
 | 5 | Surfacing | Make consults visible | `monitor` block + dashboard section |
 | 6 | Orchestrator docs + loop | Triage consults; sharpen experts | `CLAUDE.md` |
 | 7 | In-repo ADR note | Rationale travels with the code | PR-body `## Design decisions` |
+| 8 | Product brief | The user's product thinking, fed to the product/principal experts | `PRODUCT.md` (live) + `PRODUCT.example.md` + `setup-hub.ps1` + `product.ps1` |
 
 ## 1. Expert agent definitions (the roster)
 
@@ -84,7 +85,7 @@ about uncertainty rather than confident hand-waving.
 | `hub-data` | Schema & migration design, integrity/constraints, indexing, backward-compatible evolution, query shape. |
 | `hub-observability` | What to log/measure/trace; structured events; what activity to capture so it is genuinely useful for future improvement; avoiding noise. |
 | `hub-security` | Authz/authn, input validation, secrets handling, data exposure, safe-by-default. |
-| `hub-dx-product` | The consumer's view: API/UX ergonomics, naming, error messages, edge cases users hit, "is this actually easy to use." |
+| `hub-dx-product` | The consumer's view: API/UX ergonomics, naming, error messages, edge cases users hit, "is this actually easy to use." **Grounds its advice in the product brief (§8).** |
 
 **Routing (v1):** worktree-orchestrated/flat. `hub-principal` is the default; it may *recommend* a
 specialist, but the **worktree** spawns the specialist (the principal does not convene nested subagents
@@ -169,6 +170,25 @@ exactly where you later learn whether the expert or the engineer was right.
 In addition to the ledger row, the worktree appends a short `## Design decisions` section to its PR body
 summarizing each consult (decision + one-line rationale, expert named) so the reasoning travels with the
 code for human reviewers — not only in the hub-local ledger.
+
+## 8. Product brief (the user's product thinking — captured + live-updatable)
+
+The `hub-dx-product` and `hub-principal` experts give generic advice unless they know *this* product's
+intent. A living **`PRODUCT.md` at the hub root** holds the user's product thinking: vision, target users,
+what success looks like, priorities, non-goals, quality/tone bar, key constraints.
+
+- **Tracked as `PRODUCT.example.md` (template); real `PRODUCT.md` git-ignored** — the `hub.config.json` pattern.
+- **Captured at setup:** `setup-hub.ps1` scaffolds `PRODUCT.md` from the template on first run (skippable;
+  experts fall back to generic advice if it is empty/absent).
+- **Surfaced on consult, read LIVE:** the consult workflow has the worktree read `<hub>\PRODUCT.md` and pass
+  the relevant product context into the prompt when consulting `hub-dx-product`/`hub-principal`. The
+  worktree's *main* session reads it (so the worktree file-resolution bug does not apply), and because it is
+  read live at consult time, **any edit is reflected on the next consult** — in current and future
+  worktrees. Single source of truth; no per-worktree copy to go stale.
+- **Update during development:** edit `<hub>\PRODUCT.md` directly (live-read = instant), or use
+  `product.ps1 -Append '<note>'` to jot a timestamped product insight (`-Show` prints the brief).
+- The `hub-dx-product`/`hub-principal` system prompts include: *"ground your advice in the product brief the
+  worktree gives you; if none is provided, say so and advise generically."*
 
 ## Error handling / edge cases
 
