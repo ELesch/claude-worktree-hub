@@ -92,10 +92,107 @@ function NullableInt([int]$v) { if ($v -gt 0) { "$v" } else { 'NULL' } }
 # Read-only: compute a grouped-wave PROPOSAL from the ledger (no writes). Returns clusters (file-overlapping
 # approved+simple issues, capped), singletons, not-grouped (complex/no-path), and deferrals, plus lookup maps.
 function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
-    # Task 1 stub — filled in by Tasks 2 (compute) and 3 (siblings).
+    $activeStatuses = "'registered','working','spec-gate','pr-open','blocked'"
+    $sevCase = "CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END"
+
+    # paths owned by an ACTIVE worktree (in-flight) - same semantics as 'issue next'
+    $claimed = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($p in @(& sqlite3 $Db "SELECT DISTINCT t.path FROM issue_target t JOIN worktree w ON w.issue=t.issue_number WHERE t.ownership='owns' AND w.status IN ($activeStatuses);")) {
+        if ($p) { [void]$claimed.Add($p) }
+    }
+
+    # approved issues not already owned by an active worktree, priority-ordered (user-origin, severity, number)
+    $rows = @(& sqlite3 -separator '|' $Db "SELECT number, COALESCE(track,''), origin, COALESCE(severity,'-'), substr(replace(title,'|','/'),1,42) FROM issue WHERE review_status='approved' AND number NOT IN (SELECT issue FROM worktree WHERE issue IS NOT NULL AND status IN ($activeStatuses)) ORDER BY (origin='user') DESC, $sevCase, number;")
+
+    $meta = @{}; $ownPaths = @{}; $rank = @{}
+    $eligible = [System.Collections.Generic.List[int]]::new()
+    $notGrouped = @(); $deferInFlight = @()
+    $idx = 0
+    foreach ($r in $rows) {
+        if (-not $r) { continue }
+        $f = $r -split '\|', 5
+        $num = [int]$f[0]; $track = $f[1]
+        $meta[$num] = [pscustomobject]@{ Origin = $f[2]; Sev = $f[3]; Title = $f[4] }
+        $rank[$num] = $idx; $idx++
+        if ($track -ne 'simple') { $notGrouped += [pscustomobject]@{ Issue = $num; Tag = '[complex]' }; continue }
+        $paths = @(& sqlite3 $Db "SELECT path FROM issue_target WHERE issue_number=$num AND ownership='owns';" | Where-Object { $_ })
+        if (-not $paths.Count) { $notGrouped += [pscustomobject]@{ Issue = $num; Tag = '[no owned paths]' }; continue }
+        $blocked = $null
+        foreach ($p in $paths) { if ($claimed.Contains($p)) { $blocked = $p; break } }
+        if ($blocked) { $deferInFlight += [pscustomobject]@{ Issue = $num; Path = $blocked }; continue }
+        $ownPaths[$num] = $paths
+        [void]$eligible.Add($num)
+    }
+
+    # overlap graph over eligible issues: shared owned path OR depends-on (both endpoints eligible)
+    $adj = @{}
+    foreach ($num in $eligible) { $adj[$num] = [System.Collections.Generic.HashSet[int]]::new() }
+    $byPath = @{}
+    foreach ($num in $eligible) {
+        foreach ($p in $ownPaths[$num]) {
+            if (-not $byPath.ContainsKey($p)) { $byPath[$p] = [System.Collections.Generic.List[int]]::new() }
+            [void]$byPath[$p].Add($num)
+        }
+    }
+    foreach ($p in $byPath.Keys) {
+        $grp = $byPath[$p]
+        foreach ($a in $grp) { foreach ($b in $grp) { if ($a -ne $b) { [void]$adj[$a].Add($b) } } }
+    }
+    $eligSet = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($n in $eligible) { [void]$eligSet.Add($n) }
+    foreach ($num in $eligible) {
+        foreach ($dStr in @(& sqlite3 $Db "SELECT related_number FROM issue_link WHERE issue_number=$num AND kind='depends-on';" | Where-Object { $_ })) {
+            $d = [int]$dStr
+            if ($eligSet.Contains($d)) { [void]$adj[$num].Add($d); [void]$adj[$d].Add($num) }
+        }
+    }
+
+    # connected components (BFS)
+    $seen = [System.Collections.Generic.HashSet[int]]::new()
+    $components = [System.Collections.Generic.List[object]]::new()
+    foreach ($num in $eligible) {
+        if ($seen.Contains($num)) { continue }
+        $comp = [System.Collections.Generic.List[int]]::new()
+        $queue = [System.Collections.Generic.Queue[int]]::new()
+        $queue.Enqueue($num); [void]$seen.Add($num)
+        while ($queue.Count) {
+            $cur = $queue.Dequeue(); [void]$comp.Add($cur)
+            foreach ($nb in $adj[$cur]) { if (-not $seen.Contains($nb)) { [void]$seen.Add($nb); $queue.Enqueue($nb) } }
+        }
+        [void]$components.Add($comp)
+    }
+
+    # caps -> clusters / singletons / over-cap deferrals
+    $ordered = @($components | Sort-Object { ($_ | ForEach-Object { $rank[$_] } | Measure-Object -Minimum).Minimum })
+    $clusters = [System.Collections.Generic.List[object]]::new()
+    $singletons = @(); $deferOverCap = @()
+    foreach ($comp in $ordered) {
+        $members = @($comp | Sort-Object { $rank[$_] })
+        if ($members.Count -le 1) { $singletons += [int]$members[0]; continue }
+        $union = [System.Collections.Generic.HashSet[string]]::new()
+        foreach ($m in $members) { foreach ($p in $ownPaths[$m]) { [void]$union.Add($p) } }
+        if ($members.Count -le $MaxI -and $union.Count -le $MaxF) {
+            [void]$clusters.Add([pscustomobject]@{ Members = $members; Files = @($union); Siblings = @() }); continue
+        }
+        # over a cap: greedily admit highest-priority members within both caps; defer the rest
+        $pick = [System.Collections.Generic.List[int]]::new()
+        $pf = [System.Collections.Generic.HashSet[string]]::new()
+        foreach ($m in $members) {
+            if ($pick.Count -ge $MaxI) { break }
+            $t = [System.Collections.Generic.HashSet[string]]::new($pf)
+            foreach ($p in $ownPaths[$m]) { [void]$t.Add($p) }
+            if ($t.Count -le $MaxF) { [void]$pick.Add($m); $pf = $t }
+        }
+        if (-not $pick.Count) { [void]$pick.Add($members[0]); foreach ($p in $ownPaths[$members[0]]) { [void]$pf.Add($p) } }
+        [void]$clusters.Add([pscustomobject]@{ Members = @($pick); Files = @($pf); Siblings = @() })
+        $ci = $clusters.Count
+        foreach ($m in $members) { if (-not $pick.Contains($m)) { $deferOverCap += [pscustomobject]@{ Issue = $m; Cluster = $ci } } }
+    }
+
     return [pscustomobject]@{
-        Clusters = @(); Singletons = @(); NotGrouped = @()
-        DeferOverCap = @(); DeferInFlight = @(); Meta = @{}; OwnPaths = @{}
+        Clusters = $clusters; Singletons = $singletons; NotGrouped = $notGrouped
+        DeferOverCap = $deferOverCap; DeferInFlight = $deferInFlight
+        Meta = $meta; OwnPaths = $ownPaths
     }
 }
 
