@@ -202,6 +202,20 @@ Describe 'ledger-to-html includes consults' {
     }
 }
 
+Describe 'ledger-to-html grouped worktree (+k) tag' {
+    It 'renders (+k) in the worktrees section for a grouped worktree' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('cluster-12-x','solver',12,'working');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
+        $html = Join-Path $TestDrive 'ledger-grouped.html'
+        $renderer = $script:rc.Replace('review-coverage.ps1', 'ledger-to-html.ps1')
+        & $renderer -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
+        $text = Get-Content $html -Raw
+        $text | Should -Match 'Worktrees'
+        $text | Should -Match '\(\+2\)'
+    }
+}
+
 Describe 'product-necessity consult convention' {
     It 'records a hub-product persona review under area=product-necessity' {
         $db = New-TempDb
@@ -341,7 +355,7 @@ Describe 'issue clusters' {
         & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/x.ts','owns'),(15,'src/lib/x.ts','owns'),(20,'src/lib/x.ts','owns');" | Out-Null
         & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('f','Medium','proposed','src/lib/x.ts','app/db');" | Out-Null
         & sqlite3 $db "INSERT INTO recommendation(title,severity,status,area) VALUES('r','Low','proposed','src/lib');" | Out-Null
-        $sig = "SELECT (SELECT count(*) FROM issue)||'/'||(SELECT count(*) FROM issue_target)||'/'||(SELECT count(*) FROM finding)||'/'||(SELECT count(*) FROM recommendation)||'/'||(SELECT count(*) FROM worktree)||'|'||COALESCE((SELECT group_concat(status) FROM finding),'')||'|'||COALESCE((SELECT group_concat(status) FROM recommendation),'');"
+        $sig = "SELECT (SELECT count(*) FROM issue)||'/'||(SELECT count(*) FROM issue_target)||'/'||(SELECT count(*) FROM finding)||'/'||(SELECT count(*) FROM recommendation)||'/'||(SELECT count(*) FROM worktree)||'/'||(SELECT count(*) FROM worktree_issue)||'|'||COALESCE((SELECT group_concat(status) FROM finding),'')||'|'||COALESCE((SELECT group_concat(status) FROM recommendation),'')||'|'||COALESCE((SELECT group_concat(review_status) FROM issue),'');"
         $before = & sqlite3 $db $sig
         & $script:rc issue clusters -DbPath $db 6>&1 | Out-Null
         $after = & sqlite3 $db $sig
@@ -377,5 +391,130 @@ Describe 'issue clusters' {
         $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
         $out | Should -Match 'advisory siblings'
         $out | Should -Match 'rec     #1.*\[area\]'
+    }
+}
+
+Describe 'worktree_issue (grouped-wave membership)' {
+    It 'init creates the worktree_issue table and is idempotent' {
+        $db = New-TempDb
+        & $script:rc init -DbPath $db | Out-Null    # re-run init on an already-init'd db
+        (& sqlite3 $db "SELECT name FROM sqlite_master WHERE type='table' AND name='worktree_issue';") | Should -Be 'worktree_issue'
+    }
+    It 'register -Issues records the lowest as primary and one worktree_issue row per member' {
+        $db = New-TempDb
+        & $script:rc register -Worktree 'cluster-12-x' -WType solver -Issues 15,12,19 -Branch 'fix/cluster-12-x' -DbPath $db | Out-Null
+        (& sqlite3 $db "SELECT issue FROM worktree WHERE name='cluster-12-x';") | Should -Be '12'
+        (& sqlite3 $db "SELECT group_concat(issue_number) FROM (SELECT issue_number FROM worktree_issue WHERE worktree='cluster-12-x' ORDER BY issue_number);") | Should -Be '12,15,19'
+    }
+    It 'register -Issue (single) writes no worktree_issue rows' {
+        $db = New-TempDb
+        & $script:rc register -Worktree 'issue-42-y' -WType solver -Issue 42 -Branch 'fix/issue-42-y' -DbPath $db | Out-Null
+        (& sqlite3 $db "SELECT count(*) FROM worktree_issue WHERE worktree='issue-42-y';") | Should -Be '0'
+    }
+}
+
+Describe 'grouped-wave in-flight (membership union)' {
+    It 'clusters defers an approved issue colliding on a NON-primary member of an active grouped worktree' {
+        $db = New-TempDb
+        # active grouped worktree owns {12,15,19}; member 19 owns src/c.ts. New approved issue 30 also owns src/c.ts.
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(30,'collides on c','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(19,'src/c.ts','owns'),(30,'src/c.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('cluster-12-x','solver',12,'working');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match '#30.*in-flight area'
+    }
+    It 'issue next defers the same collision via the membership union' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(30,'collides on c','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(19,'src/c.ts','owns'),(30,'src/c.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('cluster-12-x','solver',12,'working');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
+        $out = (& $script:rc issue next -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match '#30 -> collides on src/c.ts'
+    }
+    It 'monitor shows a grouped worktree with a (+k) issue tag' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/a.ts','owns'),(15,'src/b.ts','owns'),(19,'src/c.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('cluster-12-x','solver',12,'working');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
+        $out = (& $script:rc monitor -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match '12 \(\+2\)'
+    }
+}
+
+Describe 'issue clusters sibling-precision hardening' {
+    It 'matches a needle containing [ ] literally (no wildcard char-class)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/app/[id].tsx','owns'),(15,'src/app/[id].tsx','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('dynamic route bug','Medium','proposed','fix src/app/[id].tsx render','app/route');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'finding #1.*\[path\]'   # [id].tsx matched literally, not as a char class
+    }
+    It 'does not corrupt parsing when a finding scope contains a pipe' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/q.ts','owns'),(15,'src/lib/q.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('piped scope','Medium','proposed','a|b in src/lib/q.ts','app/db');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'finding #1.*\[path\]'   # the pipe in scope did not shift the |-split parse
+    }
+    It 'demotes a generic basename to [path:base] but keeps a specific basename as [path]' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        # 12 & 15 share src/lib/shared.ts -> one cluster; files include the generic index.ts and the specific page-queries.ts
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/shared.ts','owns'),(12,'src/lib/index.ts','owns'),(15,'src/lib/shared.ts','owns'),(15,'src/lib/page-queries.ts','owns');" | Out-Null
+        # finding mentions only the generic basename 'index.ts' (no dir) -> weak
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('generic','Low','proposed','something in index.ts somewhere','x');" | Out-Null
+        # rec mentions the specific basename 'page-queries.ts' -> strong
+        & sqlite3 $db "INSERT INTO recommendation(title,severity,status,scope) VALUES('specific','Low','proposed','page-queries.ts needs work');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'finding #1.*\[path:base\]'
+        $out | Should -Match 'rec     #1.*\[path\]'
+    }
+}
+
+Describe 'Save-IssuesIndex (grouped-wave cover sheet)' {
+    BeforeAll { . (Join-Path $PSScriptRoot 'hub-lib.ps1') }
+    It 'writes ISSUES.md listing members, shared files, advisory siblings, and the one-PR rule' {
+        $dest = Join-Path $TestDrive ("wt-" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        $members = @(
+            [pscustomobject]@{ Number = 12; Title = 'page n+1'; Origin = 'user'; Severity = 'High' },
+            [pscustomobject]@{ Number = 15; Title = 'cache pages'; Origin = 'recon'; Severity = 'Medium' }
+        )
+        $sibs = @([pscustomobject]@{ Type = 'finding'; Id = 81; Sev = 'Medium'; Why = 'path'; Title = 'missing index' })
+        $p = Save-IssuesIndex -Dest $dest -Members $members -SharedPaths @('src/lib/page-queries.ts') -Siblings $sibs -Area 'src/lib'
+        Test-Path $p | Should -BeTrue
+        $txt = Get-Content $p -Raw
+        $txt | Should -Match 'issues #12, #15'
+        $txt | Should -Match 'ISSUE-12\.md'
+        $txt | Should -Match 'src/lib/page-queries\.ts'
+        $txt | Should -Match 'finding #81'
+        $txt | Should -Match 'Fixes #<n>'
+    }
+}
+
+Describe 'grouped provisioning helpers' {
+    BeforeAll { . (Join-Path $PSScriptRoot 'hub-lib.ps1') }
+    It 'Get-ClusterName builds cluster-<lowest>-<slug>' {
+        Get-ClusterName -Lowest 12 -Title 'Fix N+1 in page queries' | Should -Be 'cluster-12-fix-n-1-in-page-queries'
+    }
+    It 'Get-UnapprovedIssues returns only the non-approved members' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status) VALUES(12,'a','approved'),(15,'b','reviewed'),(19,'c','approved');" | Out-Null
+        $bad = @(Get-UnapprovedIssues -DbPath $db -Numbers @(12,15,19))
+        $bad.Count | Should -Be 1
+        $bad[0].Issue | Should -Be 15
+        $bad[0].Status | Should -Be 'reviewed'
+    }
+    It 'Get-UnapprovedIssues reports an unsynced member as not synced' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status) VALUES(12,'a','approved');" | Out-Null
+        $bad = @(Get-UnapprovedIssues -DbPath $db -Numbers @(12,99))
+        $bad.Count | Should -Be 1
+        $bad[0].Issue | Should -Be 99
+        $bad[0].Status | Should -Be 'not synced'
     }
 }

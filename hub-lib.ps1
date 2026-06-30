@@ -2,7 +2,7 @@
   hub-lib.ps1 - shared helpers for the claude-worktree-hub.
   Dot-source it:  . "$PSScriptRoot\hub-lib.ps1"
   Functions: ConvertTo-Slug, Get-IssueAttachmentUrls, Save-IssueImages,
-             ConvertTo-LocalLinks, Save-IssueBundle, Add-HubExclude, Copy-HubExperts
+             ConvertTo-LocalLinks, Save-IssueBundle, Save-IssuesIndex, Add-HubExclude, Copy-HubExperts
   Requires $HubConfig in scope: dot-source hub-config.ps1 before hub-lib.ps1.
 #>
 
@@ -16,6 +16,25 @@ function ConvertTo-Slug {
     if ($s.Length -gt $MaxLen) { $s = $s.Substring(0, $MaxLen).Trim('-') }
     if (-not $s) { $s = 'issue' }
     return $s
+}
+
+function Get-ClusterName {
+    # Folder/branch stem for a grouped wave: cluster-<lowest>-<slug-from-lowest-title>.
+    param([Parameter(Mandatory)][int]$Lowest, [string]$Title)
+    "cluster-$Lowest-$(ConvertTo-Slug $Title)"
+}
+
+function Get-UnapprovedIssues {
+    # The members NOT review_status='approved' in the ledger (the grouped provisioning gate).
+    # Returns objects with .Issue and .Status ('not synced' when the issue isn't in the ledger).
+    param([Parameter(Mandatory)][string]$DbPath, [Parameter(Mandatory)][int[]]$Numbers)
+    $bad = @()
+    foreach ($n in $Numbers) {
+        $rs = (& sqlite3 $DbPath "SELECT COALESCE(review_status,'') FROM issue WHERE number=$n;")
+        if ($LASTEXITCODE -ne 0) { throw "sqlite3 read failed for issue $n (exit $LASTEXITCODE)" }
+        if ($rs -ne 'approved') { $bad += [pscustomobject]@{ Issue = $n; Status = $(if ($rs) { $rs } else { 'not synced' }) } }
+    }
+    return $bad
 }
 
 function Get-IssueAttachmentUrls {
@@ -90,7 +109,8 @@ function Save-IssueBundle {
         [Parameter(Mandatory)][int]$Issue,
         [Parameter(Mandatory)][string]$Dest,
         [string]$Repo,   # defaults to $HubConfig.repo when called from a hub script
-        [string]$AssetsSubdir = "issue-assets"
+        [string]$AssetsSubdir = "issue-assets",
+        [string]$FileName = "ISSUE.md"   # grouped waves pass ISSUE-<n>.md; single-issue default unchanged
     )
     if (-not $Repo) { $Repo = $HubConfig.repo }
     $fields = 'number,title,state,body,author,assignees,labels,milestone,url,createdAt,updatedAt,comments'
@@ -139,7 +159,7 @@ function Save-IssueBundle {
         }
     }
 
-    $issueMd = Join-Path $Dest "ISSUE.md"
+    $issueMd = Join-Path $Dest $FileName
     [System.IO.File]::WriteAllText($issueMd, ($lines -join $nl), (New-Object System.Text.UTF8Encoding($false)))
 
     return [pscustomobject]@{
@@ -149,6 +169,52 @@ function Save-IssueBundle {
         Title     = $j.title
         Number    = $j.number
     }
+}
+
+function Save-IssuesIndex {
+    <# Write the grouped-wave cover sheet ISSUES.md into $Dest: the member issues (each with its own
+       ISSUE-<n>.md brief), the shared owned paths (why these are one wave), and any advisory siblings to
+       fold in opportunistically. Pure (no gh / no $HubConfig) so it is unit-testable. Returns the path. #>
+    param(
+        [Parameter(Mandatory)][string]$Dest,
+        [Parameter(Mandatory)][object[]]$Members,   # objects with .Number .Title .Origin .Severity
+        [string[]]$SharedPaths = @(),
+        [object[]]$Siblings = @(),                   # objects with .Type .Id .Sev .Why .Title
+        [string]$Area = ''
+    )
+    $nl = [Environment]::NewLine
+    $lines = New-Object System.Collections.Generic.List[string]
+    $nums = @($Members | ForEach-Object { $_.Number })
+    $lines.Add("# Grouped wave: issues #" + ($nums -join ', #'))
+    $lines.Add("")
+    if ($Area) { $lines.Add("- Area: $Area") }
+    $lines.Add("- Members: " + $Members.Count)
+    $lines.Add("")
+    $lines.Add("> Local cover sheet fetched by the worktree hub. Git-excluded; safe to read, do not commit.")
+    $lines.Add("> You own ALL of these issues in this one worktree: implement each, then open ONE PR whose")
+    $lines.Add("> body carries one ``Fixes #<n>`` line per member. Read each ``ISSUE-<n>.md`` for the full brief.")
+    $lines.Add("")
+    $lines.Add("## Members")
+    $lines.Add("")
+    foreach ($m in $Members) {
+        $lines.Add("- **#$($m.Number)** [$($m.Origin) - $($m.Severity)] $($m.Title)  (brief: ``ISSUE-$($m.Number).md``)")
+    }
+    $lines.Add("")
+    if ($SharedPaths.Count) {
+        $lines.Add("## Shared owned files (why these are one wave)")
+        $lines.Add("")
+        foreach ($p in $SharedPaths) { $lines.Add("- ``$p``") }
+        $lines.Add("")
+    }
+    if ($Siblings.Count) {
+        $lines.Add("## Advisory siblings (proposed findings/recs - verify before bundling; fold in only if cheap & in scope)")
+        $lines.Add("")
+        foreach ($s in $Siblings) { $lines.Add("- $($s.Type) #$($s.Id) [$($s.Sev)] ($($s.Why)) - $($s.Title)") }
+        $lines.Add("")
+    }
+    $issuesMd = Join-Path $Dest "ISSUES.md"
+    [System.IO.File]::WriteAllText($issuesMd, ($lines -join $nl), (New-Object System.Text.UTF8Encoding($false)))
+    return $issuesMd
 }
 
 function Copy-HubExperts {

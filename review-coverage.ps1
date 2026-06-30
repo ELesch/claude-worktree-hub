@@ -22,6 +22,7 @@
                [-Severity .. -Scope '..' -FixedBy '..' -Confidence .. -Note '..' -Related '12,15' -DependsOn '9' -Dismiss]
       resolve  -Id n [-Issue M]                                 (stamp completed_at + status=completed at merge)
       register -Worktree w -WType solver -Issue N -Branch b      (orchestrator: add a worktree to the monitor)
+      register -Worktree w -WType solver -Issues N,M,.. -Branch b (grouped wave: links all members)
       progress -Worktree w -Status <working|spec-gate|pr-open|merged|retired|blocked|failed> [-Pr M] [-Note d]
       recommend -Worktree w -Issue N -Title '..' [-Area a -Severity s -Detail d]   (solver: out-of-scope issue)
       monitor | recommendations [-Status proposed] | file-rec -Id n | dismiss-rec -Id n
@@ -40,7 +41,7 @@ param(
     [string]$Worktree, [string]$WType, [string]$Event, [string]$Detail,
     [string]$Topic, [string]$Title, [string]$Severity = 'Medium', [string]$Category, [string]$Suggestion,
     [string]$Status = 'proposed',
-    [int]$Issue, [string]$Branch, [int]$Pr, [string]$Area, [string]$Note,
+    [int]$Issue, [int[]]$Issues, [string]$Branch, [int]$Pr, [string]$Area, [string]$Note,   # -Issues: grouped-wave membership (register)
     [string]$Verdict, [string]$Scope, [string]$FixedBy, [string]$Confidence, [string]$Related, [string]$DependsOn,
     [string]$Targets, [string]$Reads, [string]$Effort, [string]$Track,   # issue-review fields
     [int]$MaxIssues = 4, [int]$MaxFiles = 8,                              # issue clusters: per-cluster caps
@@ -88,6 +89,12 @@ function Scalar([string]$sql) {
     return $r
 }
 function NullableInt([int]$v) { if ($v -gt 0) { "$v" } else { 'NULL' } }
+# Issue numbers owned by an ACTIVE worktree: the single worktree.issue UNION the worktree_issue
+# join rows (grouped waves). The one in-flight/eligibility definition shared by clusters + next.
+function ActiveMemberIssuesSql([string]$ActiveStatuses) {
+    "SELECT issue FROM worktree WHERE issue IS NOT NULL AND status IN ($ActiveStatuses) " +
+    "UNION SELECT wi.issue_number FROM worktree_issue wi JOIN worktree w ON w.name=wi.worktree WHERE w.status IN ($ActiveStatuses)"
+}
 
 # Read-only: compute a grouped-wave PROPOSAL from the ledger (no writes). Returns clusters (file-overlapping
 # approved+simple issues, capped), singletons, not-grouped (complex/no-path), and deferrals, plus lookup maps.
@@ -97,12 +104,12 @@ function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
 
     # paths owned by an ACTIVE worktree (in-flight) - same semantics as 'issue next'
     $claimed = [System.Collections.Generic.HashSet[string]]::new()
-    foreach ($p in @(& sqlite3 $Db "SELECT DISTINCT t.path FROM issue_target t JOIN worktree w ON w.issue=t.issue_number WHERE t.ownership='owns' AND w.status IN ($activeStatuses);")) {
+    foreach ($p in @(& sqlite3 $Db "SELECT DISTINCT path FROM issue_target WHERE ownership='owns' AND issue_number IN ($(ActiveMemberIssuesSql $activeStatuses));")) {
         if ($p) { [void]$claimed.Add($p) }
     }
 
     # approved issues not already owned by an active worktree, priority-ordered (user-origin, severity, number)
-    $rows = @(& sqlite3 -separator '|' $Db "SELECT number, COALESCE(track,''), origin, COALESCE(severity,'-'), substr(replace(title,'|','/'),1,42) FROM issue WHERE review_status='approved' AND number NOT IN (SELECT issue FROM worktree WHERE issue IS NOT NULL AND status IN ($activeStatuses)) ORDER BY (origin='user') DESC, $sevCase, number;")
+    $rows = @(& sqlite3 -separator '|' $Db "SELECT number, COALESCE(track,''), origin, COALESCE(severity,'-'), substr(replace(title,'|','/'),1,42) FROM issue WHERE review_status='approved' AND number NOT IN ($(ActiveMemberIssuesSql $activeStatuses)) ORDER BY (origin='user') DESC, $sevCase, number;")
 
     $meta = @{}; $ownPaths = @{}; $rank = @{}
     $eligible = [System.Collections.Generic.List[int]]::new()
@@ -191,18 +198,21 @@ function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
 
     # advisory siblings: open (proposed) findings/recs matched to a cluster by scope-path (strong) or area (weak)
     $sib = @()
-    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), COALESCE(scope,''), COALESCE(topic,''), substr(replace(title,'|','/'),1,40) FROM finding WHERE status='proposed';")) {
+    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), replace(COALESCE(scope,''),'|','/'), replace(COALESCE(topic,''),'|','/'), substr(replace(title,'|','/'),1,40) FROM finding WHERE status='proposed';")) {
         if ($r) { $g = $r -split '\|', 5; $sib += [pscustomobject]@{ Type = 'finding'; Id = [int]$g[0]; Sev = $g[1]; Scope = $g[2]; Area = $g[3]; Title = $g[4] } }
     }
-    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), COALESCE(scope,''), COALESCE(area,''), substr(replace(title,'|','/'),1,40) FROM recommendation WHERE status='proposed';")) {
+    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), replace(COALESCE(scope,''),'|','/'), replace(COALESCE(area,''),'|','/'), substr(replace(title,'|','/'),1,40) FROM recommendation WHERE status='proposed';")) {
         if ($r) { $g = $r -split '\|', 5; $sib += [pscustomobject]@{ Type = 'rec'; Id = [int]$g[0]; Sev = $g[1]; Scope = $g[2]; Area = $g[3]; Title = $g[4] } }
     }
     $sevRank = @{ 'Critical' = 0; 'High' = 1; 'Medium' = 2; 'Low' = 3 }
     foreach ($cl in $clusters) {
-        $pathNeedles = @(); $dirs = @()
+        # generic basenames are too common to be a STRONG path signal on their own -> demote to weak [path:base]
+        $genericBase = @('index.ts','index.tsx','index.js','index.jsx','types.ts','utils.ts','helpers.ts','constants.ts','config.ts','mod.ts','main.ts','__init__.py')
+        $strongNeedles = @(); $weakNeedles = @(); $dirs = @()
         foreach ($p in $cl.Files) {
-            $pathNeedles += $p
-            $pathNeedles += (($p -split '[\\/]')[-1])                       # basename
+            $strongNeedles += $p                                            # full path: always strong
+            $base = ($p -split '[\\/]')[-1]
+            if ($genericBase -contains $base.ToLowerInvariant()) { $weakNeedles += $base } else { $strongNeedles += $base }
             if ($p -match '[\\/]') { $dirs += ($p -replace '[\\/][^\\/]*$', '') }   # containing dir
         }
         $labelTokens = @()
@@ -213,13 +223,16 @@ function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
         $areaNeedles = @(@($dirs + $labelTokens) | Where-Object { $_ } | Sort-Object -Unique)
         $matched = @()
         foreach ($s in $sib) {
-            $isPath = $false
-            foreach ($n in $pathNeedles) { if ($n -and $s.Scope -like "*$n*") { $isPath = $true; break } }
-            $isArea = $false
-            if (-not $isPath -and $s.Area) { foreach ($n in $areaNeedles) { if ($n -and $s.Area -like "*$n*") { $isArea = $true; break } } }
-            if ($isPath -or $isArea) { $matched += [pscustomobject]@{ Type = $s.Type; Id = $s.Id; Sev = $s.Sev; Title = $s.Title; Why = $(if ($isPath) { 'path' } else { 'area' }) } }
+            $why = $null
+            foreach ($n in $strongNeedles) { if ($n) { $en = [System.Management.Automation.WildcardPattern]::Escape($n); if ($s.Scope -like "*$en*") { $why = 'path'; break } } }
+            if (-not $why) { foreach ($n in $weakNeedles) { if ($n) { $en = [System.Management.Automation.WildcardPattern]::Escape($n); if ($s.Scope -like "*$en*") { $why = 'path:base'; break } } } }
+            if (-not $why -and $s.Area) { foreach ($n in $areaNeedles) { if ($n) { $en = [System.Management.Automation.WildcardPattern]::Escape($n); if ($s.Area -like "*$en*") { $why = 'area'; break } } } }
+            if ($why) { $matched += [pscustomobject]@{ Type = $s.Type; Id = $s.Id; Sev = $s.Sev; Title = $s.Title; Why = $why } }
         }
-        $cl.Siblings = @($matched | Sort-Object @{ e = { if ($sevRank.ContainsKey($_.Sev)) { $sevRank[$_.Sev] } else { 4 } } }, Id)
+        $whyRank = @{ 'path' = 0; 'area' = 1; 'path:base' = 2 }
+        $cl.Siblings = @($matched | Sort-Object `
+            @{ e = { if ($sevRank.ContainsKey($_.Sev)) { $sevRank[$_.Sev] } else { 4 } } }, `
+            @{ e = { $whyRank[$_.Why] } }, Id)
     }
 
     return [pscustomobject]@{
@@ -278,6 +291,9 @@ CREATE TABLE IF NOT EXISTS issue_target(
 CREATE TABLE IF NOT EXISTS issue_link(
   id INTEGER PRIMARY KEY, issue_number INTEGER NOT NULL, related_number INTEGER NOT NULL,
   kind TEXT NOT NULL, note TEXT, created_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS worktree_issue(
+  id INTEGER PRIMARY KEY, worktree TEXT NOT NULL, issue_number INTEGER NOT NULL,
+  UNIQUE(worktree, issue_number));
 CREATE TABLE IF NOT EXISTS hubfinding(
   id INTEGER PRIMARY KEY, source TEXT, wtype TEXT, category TEXT, title TEXT NOT NULL, detail TEXT,
   severity TEXT, status TEXT DEFAULT 'open', target TEXT, resolution TEXT,
@@ -294,6 +310,8 @@ CREATE INDEX IF NOT EXISTS ix_finding_link_finding ON finding_link(finding_id);
 CREATE INDEX IF NOT EXISTS ix_issue_status ON issue(review_status);
 CREATE INDEX IF NOT EXISTS ix_issue_target_num ON issue_target(issue_number);
 CREATE INDEX IF NOT EXISTS ix_issue_target_path ON issue_target(path);
+CREATE INDEX IF NOT EXISTS ix_worktree_issue_wt ON worktree_issue(worktree);
+CREATE INDEX IF NOT EXISTS ix_worktree_issue_issue ON worktree_issue(issue_number);
 CREATE INDEX IF NOT EXISTS ix_hubfinding_status ON hubfinding(status);
 CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
 '@
@@ -477,9 +495,15 @@ CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
     'register' {
         if (-not $Worktree) { throw "register requires -Worktree" }
         $wt = q $Worktree; $wt2 = q $WType
-        Exec "INSERT INTO worktree(name,wtype,issue,branch,status,note,updated_at) VALUES('$wt','$wt2',$(NullableInt $Issue),'$(q $Branch)','registered','$(q $Note)',datetime('now')) ON CONFLICT(name) DO UPDATE SET wtype=excluded.wtype, issue=excluded.issue, branch=excluded.branch, updated_at=datetime('now');"
+        # Grouped wave: -Issues 12,15,19 records the lowest member as worktree.issue (display/back-compat)
+        # plus one worktree_issue row per member (the full membership). Single -Issue is unchanged (no join rows).
+        $members = @($Issues | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+        $primary = if ($members.Count) { [int]$members[0] } else { $Issue }
+        Exec "INSERT INTO worktree(name,wtype,issue,branch,status,note,updated_at) VALUES('$wt','$wt2',$(NullableInt $primary),'$(q $Branch)','registered','$(q $Note)',datetime('now')) ON CONFLICT(name) DO UPDATE SET wtype=excluded.wtype, issue=excluded.issue, branch=excluded.branch, updated_at=datetime('now');"
+        foreach ($m in $members) { Exec "INSERT OR IGNORE INTO worktree_issue(worktree,issue_number) VALUES('$wt',$m);" }
         Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('$wt','$wt2','registered','$(q $Branch)');"
-        Write-Host "registered worktree '$Worktree' (issue $Issue)." -ForegroundColor Green
+        $label = if ($members.Count -gt 1) { "issues $($members -join ',')" } else { "issue $primary" }
+        Write-Host "registered worktree '$Worktree' ($label)." -ForegroundColor Green
     }
 
     'progress' {
@@ -504,9 +528,14 @@ CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
     'monitor' {
         Write-Host "=== Worktrees (live status) ===" -ForegroundColor Cyan
         Query @"
-SELECT name, wtype AS type, COALESCE(issue,'') AS issue, COALESCE(pr,'') AS pr, status,
+SELECT name, wtype AS type,
+  CASE WHEN (SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name) > 1
+       THEN COALESCE(CAST(issue AS TEXT),'') || ' (+' || ((SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name)-1) || ')'
+       ELSE COALESCE(CAST(issue AS TEXT),'') END AS issue,
+  COALESCE(pr,'') AS pr, status,
   CAST((julianday('now')-julianday(updated_at))*1440 AS INT) AS upd_min,
-  (SELECT count(*) FROM issue_target t WHERE t.issue_number=worktree.issue AND t.ownership='owns') AS owns,
+  (SELECT count(DISTINCT t.path) FROM issue_target t WHERE t.ownership='owns' AND t.issue_number IN (
+     SELECT worktree.issue UNION SELECT wi.issue_number FROM worktree_issue wi WHERE wi.worktree=worktree.name)) AS owns,
   (SELECT count(*) FROM recommendation r WHERE r.worktree=worktree.name AND r.status='proposed') AS recs
 FROM worktree
 ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate' THEN 2 WHEN 'working' THEN 3
@@ -704,11 +733,11 @@ LIMIT $lim;
 
             'next' {
                 $activeStatuses = "'registered','working','spec-gate','pr-open','blocked'"
-                $activePaths = @(& sqlite3 $db "SELECT DISTINCT t.path FROM issue_target t JOIN worktree w ON w.issue=t.issue_number WHERE t.ownership='owns' AND w.status IN ($activeStatuses);")
+                $activePaths = @(& sqlite3 $db "SELECT DISTINCT path FROM issue_target WHERE ownership='owns' AND issue_number IN ($(ActiveMemberIssuesSql $activeStatuses));")
                 $claimed = [System.Collections.Generic.HashSet[string]]::new()
                 foreach ($p in $activePaths) { if ($p) { [void]$claimed.Add($p) } }
                 # candidates: approved issues NOT already in flight (no active worktree)
-                $cands = @(& sqlite3 $db "SELECT number FROM issue WHERE review_status='approved' AND number NOT IN (SELECT issue FROM worktree WHERE issue IS NOT NULL AND status IN ($activeStatuses)) ORDER BY (origin='user') DESC, CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END, number;")
+                $cands = @(& sqlite3 $db "SELECT number FROM issue WHERE review_status='approved' AND number NOT IN ($(ActiveMemberIssuesSql $activeStatuses)) ORDER BY (origin='user') DESC, CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END, number;")
                 $picked = @(); $deferred = @()
                 foreach ($numStr in $cands) {
                     if (-not $numStr) { continue }
@@ -772,7 +801,7 @@ LIMIT $lim;
                         }
                         if ($sibs.Count -gt 5) { Write-Host ("    +{0} more - see 'findings' / 'recommendations'" -f ($sibs.Count - 5)) -ForegroundColor DarkGray }
                     }
-                    Write-Host ("  -> Phase 2 will provision: new-worktree.ps1 -Issues {0}" -f (@($cl.Members) -join ',')) -ForegroundColor DarkCyan
+                    Write-Host ("  -> provision: new-worktree.ps1 -Issues {0}" -f (@($cl.Members) -join ',')) -ForegroundColor DarkCyan
                 }
                 if ($singletons.Count -or $notGrouped.Count) {
                     Write-Host "`nSingletons (approved, no overlap - use issue next / new-worktree -Issue N):" -ForegroundColor Cyan
@@ -800,7 +829,7 @@ LIMIT $lim;
         Write-Host "review-coverage.ps1 commands:"
         Write-Host "  coverage : init | seed | due [-N k] | run [-N k] | report | status [-N k]"
         Write-Host "  recon    : activity | finding | complete | findings [-Status s | -Unverified] | verify -Id n -Verdict v [..] | resolve -Id n | promote -Id n"
-        Write-Host "  worktree : register -Worktree w -WType solver -Issue N -Branch b"
+        Write-Host "  worktree : register -Worktree w -WType solver -Issue N -Branch b   (grouped wave: -Issues N,M,..)"
         Write-Host "             progress -Worktree w -Status <working|spec-gate|pr-open|merged|retired|blocked|failed> [-Pr M] [-Note ..]"
         Write-Host "             recommend -Worktree w -Issue N -Title '..' [-Area a -Severity s -Detail d]"
         Write-Host "             monitor | recommendations [-Status proposed] | file-rec -Id n | dismiss-rec -Id n"
