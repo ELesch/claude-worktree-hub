@@ -398,3 +398,33 @@ Describe 'worktree_issue (grouped-wave membership)' {
         (& sqlite3 $db "SELECT count(*) FROM worktree_issue WHERE worktree='issue-42-y';") | Should -Be '0'
     }
 }
+
+Describe 'grouped-wave in-flight (membership union)' {
+    It 'clusters defers an approved issue colliding on a NON-primary member of an active grouped worktree' {
+        $db = New-TempDb
+        # active grouped worktree owns {12,15,19}; member 19 owns src/c.ts. New approved issue 30 also owns src/c.ts.
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(30,'collides on c','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(19,'src/c.ts','owns'),(30,'src/c.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('cluster-12-x','solver',12,'working');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match '#30.*in-flight area'
+    }
+    It 'issue next defers the same collision via the membership union' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(30,'collides on c','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(19,'src/c.ts','owns'),(30,'src/c.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('cluster-12-x','solver',12,'working');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
+        $out = (& $script:rc issue next -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match '#30 -> collides on src/c.ts'
+    }
+    It 'monitor shows a grouped worktree with a (+k) issue tag' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/a.ts','owns'),(15,'src/b.ts','owns'),(19,'src/c.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('cluster-12-x','solver',12,'working');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
+        $out = (& $script:rc monitor -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match '12 \(\+2\)'
+    }
+}

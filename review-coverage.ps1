@@ -88,6 +88,12 @@ function Scalar([string]$sql) {
     return $r
 }
 function NullableInt([int]$v) { if ($v -gt 0) { "$v" } else { 'NULL' } }
+# Issue numbers owned by an ACTIVE worktree: the single worktree.issue UNION the worktree_issue
+# join rows (grouped waves). The one in-flight/eligibility definition shared by clusters + next.
+function ActiveMemberIssuesSql([string]$ActiveStatuses) {
+    "SELECT issue FROM worktree WHERE issue IS NOT NULL AND status IN ($ActiveStatuses) " +
+    "UNION SELECT wi.issue_number FROM worktree_issue wi JOIN worktree w ON w.name=wi.worktree WHERE w.status IN ($ActiveStatuses)"
+}
 
 # Read-only: compute a grouped-wave PROPOSAL from the ledger (no writes). Returns clusters (file-overlapping
 # approved+simple issues, capped), singletons, not-grouped (complex/no-path), and deferrals, plus lookup maps.
@@ -97,12 +103,12 @@ function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
 
     # paths owned by an ACTIVE worktree (in-flight) - same semantics as 'issue next'
     $claimed = [System.Collections.Generic.HashSet[string]]::new()
-    foreach ($p in @(& sqlite3 $Db "SELECT DISTINCT t.path FROM issue_target t JOIN worktree w ON w.issue=t.issue_number WHERE t.ownership='owns' AND w.status IN ($activeStatuses);")) {
+    foreach ($p in @(& sqlite3 $Db "SELECT DISTINCT path FROM issue_target WHERE ownership='owns' AND issue_number IN ($(ActiveMemberIssuesSql $activeStatuses));")) {
         if ($p) { [void]$claimed.Add($p) }
     }
 
     # approved issues not already owned by an active worktree, priority-ordered (user-origin, severity, number)
-    $rows = @(& sqlite3 -separator '|' $Db "SELECT number, COALESCE(track,''), origin, COALESCE(severity,'-'), substr(replace(title,'|','/'),1,42) FROM issue WHERE review_status='approved' AND number NOT IN (SELECT issue FROM worktree WHERE issue IS NOT NULL AND status IN ($activeStatuses)) ORDER BY (origin='user') DESC, $sevCase, number;")
+    $rows = @(& sqlite3 -separator '|' $Db "SELECT number, COALESCE(track,''), origin, COALESCE(severity,'-'), substr(replace(title,'|','/'),1,42) FROM issue WHERE review_status='approved' AND number NOT IN ($(ActiveMemberIssuesSql $activeStatuses)) ORDER BY (origin='user') DESC, $sevCase, number;")
 
     $meta = @{}; $ownPaths = @{}; $rank = @{}
     $eligible = [System.Collections.Generic.List[int]]::new()
@@ -515,9 +521,14 @@ CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
     'monitor' {
         Write-Host "=== Worktrees (live status) ===" -ForegroundColor Cyan
         Query @"
-SELECT name, wtype AS type, COALESCE(issue,'') AS issue, COALESCE(pr,'') AS pr, status,
+SELECT name, wtype AS type,
+  CASE WHEN (SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name) > 1
+       THEN COALESCE(CAST(issue AS TEXT),'') || ' (+' || ((SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name)-1) || ')'
+       ELSE COALESCE(CAST(issue AS TEXT),'') END AS issue,
+  COALESCE(pr,'') AS pr, status,
   CAST((julianday('now')-julianday(updated_at))*1440 AS INT) AS upd_min,
-  (SELECT count(*) FROM issue_target t WHERE t.issue_number=worktree.issue AND t.ownership='owns') AS owns,
+  (SELECT count(DISTINCT t.path) FROM issue_target t WHERE t.ownership='owns' AND t.issue_number IN (
+     SELECT worktree.issue UNION SELECT wi.issue_number FROM worktree_issue wi WHERE wi.worktree=worktree.name)) AS owns,
   (SELECT count(*) FROM recommendation r WHERE r.worktree=worktree.name AND r.status='proposed') AS recs
 FROM worktree
 ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate' THEN 2 WHEN 'working' THEN 3
@@ -715,11 +726,11 @@ LIMIT $lim;
 
             'next' {
                 $activeStatuses = "'registered','working','spec-gate','pr-open','blocked'"
-                $activePaths = @(& sqlite3 $db "SELECT DISTINCT t.path FROM issue_target t JOIN worktree w ON w.issue=t.issue_number WHERE t.ownership='owns' AND w.status IN ($activeStatuses);")
+                $activePaths = @(& sqlite3 $db "SELECT DISTINCT path FROM issue_target WHERE ownership='owns' AND issue_number IN ($(ActiveMemberIssuesSql $activeStatuses));")
                 $claimed = [System.Collections.Generic.HashSet[string]]::new()
                 foreach ($p in $activePaths) { if ($p) { [void]$claimed.Add($p) } }
                 # candidates: approved issues NOT already in flight (no active worktree)
-                $cands = @(& sqlite3 $db "SELECT number FROM issue WHERE review_status='approved' AND number NOT IN (SELECT issue FROM worktree WHERE issue IS NOT NULL AND status IN ($activeStatuses)) ORDER BY (origin='user') DESC, CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END, number;")
+                $cands = @(& sqlite3 $db "SELECT number FROM issue WHERE review_status='approved' AND number NOT IN ($(ActiveMemberIssuesSql $activeStatuses)) ORDER BY (origin='user') DESC, CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END, number;")
                 $picked = @(); $deferred = @()
                 foreach ($numStr in $cands) {
                     if (-not $numStr) { continue }
