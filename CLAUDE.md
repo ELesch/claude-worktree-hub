@@ -61,6 +61,7 @@ All repo-specific values come from `hub.config.json` (git-ignored; generated fro
 ├── main\                    <- base worktree, tracks the default branch
 ├── agent-*\                 <- one isolated worktree per parallel task (created on demand)
 ├── issue-<N>-*\             <- issue worktree; also contains ISSUE.md + issue-assets\ (git-excluded)
+├── cluster-<lowest>-*\      <- grouped wave: one worktree owning several approved issues (ISSUE-<n>.md per member + ISSUES.md)
 ├── recon-<surface>\         <- read-only recon (discovery) worktree; proposes issues, files on approval
 └── <parent>--<piece>\       <- child worktree spawned by a complex parent (branch off parent)
 ```
@@ -755,6 +756,7 @@ Replace `pnpm` with your configured `packageManager` / `installCmd` / `verifyCmd
 - Worktree folder: `agent-<task>` for new work, `wt-<branch>` when parking an existing branch.
 - Issue worktree: `issue-<N>-<slug>` with branch `fix/issue-<N>-<slug>` — created automatically
   by `new-worktree.ps1 -Issue <N>` (slug derived from the issue title).
+- Grouped-wave worktree: `cluster-<lowest>-<slug>` with branch `fix/cluster-<lowest>-<slug>` — created by `new-worktree.ps1 -Issues <N,M,...>` (slug from the lowest member's title).
 - New branch for a worktree: `feature/<task>` or `fix/<task>` (default `feature/<Name minus the agent- prefix>`).
 - Keep folder name and branch related so `git worktree list` is self-explanatory.
 - Session tab name (`claude --name`): `#<N> <1-2 words>` (e.g. `#42 Auth`) so Windows

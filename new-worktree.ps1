@@ -139,7 +139,7 @@ if ($Existing) {
     if ($hasRemote) { & git -C $WtPath branch --set-upstream-to="origin/$br" $br 2>$null | Out-Null }
 }
 else {
-    $br = if ($Branch) { $Branch } elseif ($Issue -gt 0) { "fix/$Name" } else { "feature/$([regex]::Replace($Name, '^agent-', ''))" }
+    $br = if ($Branch) { $Branch } elseif ($Issue -gt 0 -or $isGrouped) { "fix/$Name" } else { "feature/$([regex]::Replace($Name, '^agent-', ''))" }
     if (Test-Ref "refs/heads/$br") { throw "Branch '$br' already exists. Use -Existing to check it out, or pass a different -Branch." }
     $base = if (Test-Ref "refs/remotes/origin/$BaseBranch") { "origin/$BaseBranch" } elseif (Test-Ref "refs/heads/$BaseBranch") { $BaseBranch } else { throw "Base branch '$BaseBranch' not found." }
     Write-Host "==> Creating new branch '$br' from '$base' in '$Name'..." -ForegroundColor Cyan

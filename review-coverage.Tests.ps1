@@ -202,6 +202,20 @@ Describe 'ledger-to-html includes consults' {
     }
 }
 
+Describe 'ledger-to-html grouped worktree (+k) tag' {
+    It 'renders (+k) in the worktrees section for a grouped worktree' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('cluster-12-x','solver',12,'working');" | Out-Null
+        & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
+        $html = Join-Path $TestDrive 'ledger-grouped.html'
+        $renderer = $script:rc.Replace('review-coverage.ps1', 'ledger-to-html.ps1')
+        & $renderer -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
+        $text = Get-Content $html -Raw
+        $text | Should -Match 'Worktrees'
+        $text | Should -Match '\(\+2\)'
+    }
+}
+
 Describe 'product-necessity consult convention' {
     It 'records a hub-product persona review under area=product-necessity' {
         $db = New-TempDb

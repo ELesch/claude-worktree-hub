@@ -120,9 +120,14 @@ ORDER BY id DESC;
 "@
 
 $qWorktrees = Get-Json @"
-SELECT name, wtype AS type, COALESCE(issue,'') AS issue, COALESCE(pr,'') AS pr, status,
+SELECT name, wtype AS type,
+  CASE WHEN (SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name) > 1
+       THEN COALESCE(CAST(issue AS TEXT),'') || ' (+' || ((SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name)-1) || ')'
+       ELSE COALESCE(CAST(issue AS TEXT),'') END AS issue,
+  COALESCE(pr,'') AS pr, status,
   CAST((julianday('now')-julianday(updated_at))*1440 AS INT) AS upd_min,
-  (SELECT count(*) FROM issue_target t WHERE t.issue_number=worktree.issue AND t.ownership='owns') AS owns,
+  (SELECT count(DISTINCT t.path) FROM issue_target t WHERE t.ownership='owns' AND t.issue_number IN (
+     SELECT worktree.issue UNION SELECT wi.issue_number FROM worktree_issue wi WHERE wi.worktree=worktree.name)) AS owns,
   (SELECT count(*) FROM recommendation r WHERE r.worktree=worktree.name AND r.status='proposed') AS recs,
   COALESCE(branch,'') AS branch, COALESCE(note,'') AS note
 FROM worktree
