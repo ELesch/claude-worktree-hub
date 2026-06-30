@@ -18,6 +18,25 @@ function ConvertTo-Slug {
     return $s
 }
 
+function Get-ClusterName {
+    # Folder/branch stem for a grouped wave: cluster-<lowest>-<slug-from-lowest-title>.
+    param([Parameter(Mandatory)][int]$Lowest, [string]$Title)
+    "cluster-$Lowest-$(ConvertTo-Slug $Title)"
+}
+
+function Get-UnapprovedIssues {
+    # The members NOT review_status='approved' in the ledger (the grouped provisioning gate).
+    # Returns objects with .Issue and .Status ('not synced' when the issue isn't in the ledger).
+    param([Parameter(Mandatory)][string]$DbPath, [Parameter(Mandatory)][int[]]$Numbers)
+    $bad = @()
+    foreach ($n in $Numbers) {
+        $rs = (& sqlite3 $DbPath "SELECT COALESCE(review_status,'') FROM issue WHERE number=$n;")
+        if ($LASTEXITCODE -ne 0) { throw "sqlite3 read failed for issue $n (exit $LASTEXITCODE)" }
+        if ($rs -ne 'approved') { $bad += [pscustomobject]@{ Issue = $n; Status = $(if ($rs) { $rs } else { 'not synced' }) } }
+    }
+    return $bad
+}
+
 function Get-IssueAttachmentUrls {
     param([string]$Text)
     if (-not $Text) { return @() }

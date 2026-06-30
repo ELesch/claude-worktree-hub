@@ -481,3 +481,26 @@ Describe 'Save-IssuesIndex (grouped-wave cover sheet)' {
         $txt | Should -Match 'Fixes #<n>'
     }
 }
+
+Describe 'grouped provisioning helpers' {
+    BeforeAll { . (Join-Path $PSScriptRoot 'hub-lib.ps1') }
+    It 'Get-ClusterName builds cluster-<lowest>-<slug>' {
+        Get-ClusterName -Lowest 12 -Title 'Fix N+1 in page queries' | Should -Be 'cluster-12-fix-n-1-in-page-queries'
+    }
+    It 'Get-UnapprovedIssues returns only the non-approved members' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status) VALUES(12,'a','approved'),(15,'b','reviewed'),(19,'c','approved');" | Out-Null
+        $bad = @(Get-UnapprovedIssues -DbPath $db -Numbers @(12,15,19))
+        $bad.Count | Should -Be 1
+        $bad[0].Issue | Should -Be 15
+        $bad[0].Status | Should -Be 'reviewed'
+    }
+    It 'Get-UnapprovedIssues reports an unsynced member as not synced' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status) VALUES(12,'a','approved');" | Out-Null
+        $bad = @(Get-UnapprovedIssues -DbPath $db -Numbers @(12,99))
+        $bad.Count | Should -Be 1
+        $bad[0].Issue | Should -Be 99
+        $bad[0].Status | Should -Be 'not synced'
+    }
+}
