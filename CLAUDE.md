@@ -418,8 +418,9 @@ Complex worktrees run three phases; simple ones skip straight to implement → P
    constraints, acceptance criteria) and **`PLAN.md`** (approach, files to touch, risks, test
    strategy, and — for big work — a proposed breakdown into pieces).
 2. **Gate** — present the key decisions and **STOP for the user to verify or correct** before any
-   implementation. Commit `SPEC.md`/`PLAN.md` so they're reviewable; wait in the window for "go" or
-   changes. (Auto mode only prompts on *dangerous* actions, and most planning/implementation steps are
+   implementation. `SPEC.md`/`PLAN.md` are **git-excluded** per-worktree planning scratch (not committed —
+   a committed root copy collides across worktrees on merge); the review happens live in the window. Wait
+   in the window for "go" or changes. (Auto mode only prompts on *dangerous* actions, and most planning/implementation steps are
    auto-allowed, so this gate is a *behavioral* pause — the prompt must explicitly tell the agent to stop
    and wait here; don't rely on a permission prompt to enforce it.)
 3. **Execution** (only after approval) — implement. Use **in-process subagents** for parallel work
@@ -539,17 +540,18 @@ NEVER apply a database migration to production, and NEVER run a headless `claude
 
 A complex *planning* session accumulates heavy context (research + the gate discussion). After the
 gate, the planner can **hand off to a fresh execution session** so implementation starts with an empty
-context window (just the committed plan) — resetting context and reducing token usage. Note that
+context window (just the on-disk plan) — resetting context and reducing token usage. Note that
 **subagents already keep the executor lean** (they run in their own fresh contexts and return only
 summaries); the handoff additionally drops the *planner's* accumulated context.
 
 ```powershell
-& <hub root>\handoff.ps1 -Worktree <my-folder>     # after the gate, once SPEC.md/PLAN.md are committed
+& <hub root>\handoff.ps1 -Worktree <my-folder>     # after the gate, once SPEC.md/PLAN.md are written (git-excluded; no commit needed)
 ```
 
-`handoff.ps1` requires `SPEC.md` + `PLAN.md` to exist and the worktree to be **clean/committed** (the
-executor reads the *committed* plan, so fold the gate corrections in first); it launches a fresh
-executor in the same worktree/branch (seeded "read SPEC.md/PLAN.md → implement via subagents → PR"),
+`handoff.ps1` requires `SPEC.md` + `PLAN.md` to exist and the worktree's **tracked files** to be
+**clean/committed** (`SPEC.md`/`PLAN.md` are git-excluded and read from disk, so fold the gate corrections
+into the files first); it launches a fresh executor in the same worktree/branch (seeded "read
+SPEC.md/PLAN.md → implement via subagents → PR"),
 then **closes the planner window only after confirming the executor is up** (a detached watcher;
 fail-safe — if the executor never starts, the planner is left open). `-NoClose` hands off but keeps the
 planner open; `-DryRun` generates the launchers without launching. This is the clean **Phase 1 (plan) →

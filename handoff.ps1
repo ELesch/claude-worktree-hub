@@ -4,8 +4,9 @@
     planner window once the executor is confirmed up. Resets context / cuts token usage.
 .DESCRIPTION
     Called by the planner agent AFTER the gate (plan approved). It:
-      1. Requires SPEC.md + PLAN.md to exist and the worktree to be CLEAN (committed) - the executor
-         reads the committed plan, so the user's gate corrections must already be in PLAN.md.
+      1. Requires SPEC.md + PLAN.md to exist and the worktree's TRACKED files to be CLEAN (committed) -
+         SPEC/PLAN are git-excluded and read from disk, so the user's gate corrections must already be
+         saved into them.
       2. Launches a fresh executor session in the SAME worktree/branch, seeded to read SPEC.md/PLAN.md
          and implement via subagents (no --continue -> empty context window).
       3. Launches a DETACHED watcher that waits until the executor process is actually up, then
@@ -32,7 +33,7 @@ if (-not $PrBase) { $PrBase = $HubConfig.defaultBranch }
 $wtPath = Join-Path $Hub $Worktree
 if (-not (Test-Path $wtPath)) { throw "Worktree '$Worktree' not found under the hub." }
 
-# --- Guard 1: the approved plan must be on disk and COMMITTED ---
+# --- Guard 1: the approved plan must be on disk (git-excluded); tracked files must be committed ---
 foreach ($f in @('SPEC.md', 'PLAN.md')) {
     if (-not (Test-Path (Join-Path $wtPath $f))) { throw "Missing $f in '$Worktree' - write & commit the plan before handing off." }
 }
@@ -40,7 +41,7 @@ $dirty = ((& git -C $wtPath status --porcelain) | Out-String).Trim()
 # Native git failures don't trip 'Stop'; an unchecked failure here leaves $dirty='' and SILENTLY bypasses
 # the uncommitted-changes guard, handing off on an invalid/dirty worktree.
 if ($LASTEXITCODE -ne 0) { throw "git status failed in '$Worktree' (exit $LASTEXITCODE) - is this a valid git worktree?" }
-if ($dirty) { throw "Worktree '$Worktree' has uncommitted changes - commit SPEC.md/PLAN.md and your baseline before handoff (the executor reads the committed plan)." }
+if ($dirty) { throw "Worktree '$Worktree' has uncommitted changes - commit your code baseline before handoff (SPEC.md/PLAN.md are git-excluded and read from disk)." }
 
 $branch = (& git -C $wtPath rev-parse --abbrev-ref HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw "git rev-parse failed in '$Worktree' (exit $LASTEXITCODE) - cannot determine the branch to hand off." }

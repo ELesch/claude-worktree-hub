@@ -81,6 +81,8 @@ $wtRules = Join-Path $Hub 'WORKTREE.md'
 if (Test-Path $wtRules) { Copy-Item $wtRules (Join-Path $childPath 'WORKTREE.md') -Force }
 $expertCount = Copy-HubExperts -Hub $Hub -WtPath $childPath
 if ($expertCount -gt 0) { Add-HubExclude -CommonGitDir (Join-Path $Hub '.bare') -Patterns @('/.claude/agents/hub-*.md') }
+# a -Complex child writes SPEC.md/PLAN.md too; the exclude is hub-global (also added by new-worktree) - ensure it
+Add-HubExclude -CommonGitDir (Join-Path $Hub '.bare') -Patterns @('/SPEC.md', '/PLAN.md')
 
 # --- build the child's seeded prompt ---
 if ($Complex) {
