@@ -214,6 +214,10 @@ if (Test-Path $wtRules) {
 }
 else { Write-Host "==> WARNING: hub WORKTREE.md not found - worktree has no standing-rules file to @-mention." -ForegroundColor Yellow }
 
+# --- gated-track planning docs are per-worktree scratch: git-exclude SPEC.md/PLAN.md so a complex worktree's
+#     plan never collides at the repo root when it merges (the gate review happens live in the window) ---
+Add-HubExclude -CommonGitDir (Join-Path $Hub '.bare') -Patterns @('/SPEC.md', '/PLAN.md')
+
 # --- expert advisors: copy the hub-* consultant agents into the worktree (git-excluded; consulted in-session) ---
 $expertCount = Copy-HubExperts -Hub $Hub -WtPath $WtPath
 if ($expertCount -gt 0) {

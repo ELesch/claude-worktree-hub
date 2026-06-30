@@ -73,7 +73,9 @@ deltas:
 2. **Research** the relevant code (use in-process **subagents** to explore in parallel).
 3. Write **`SPEC.md`** (problem, requirements, constraints, acceptance, **and a Product necessity section: the persona's verdict + the `PRODUCT.md` priority it serves**) and **`PLAN.md`** (approach, the
    files each piece OWNS, risks, test strategy, and a proposed breakdown into independent pieces). Make
-   them **proper**, never "short".
+   them **proper**, never "short". These are **git-excluded** per-worktree planning scratch — **do not
+   commit them** (a committed root `SPEC.md`/`PLAN.md` collides across worktrees on merge); the gate review
+   happens live in this window, and `handoff.ps1` reads them from disk.
 4. **GATE:** first consult the relevant expert(s) on each key design decision (§6) and fold their guidance
    into `SPEC.md`/`PLAN.md`; then present your key decisions + the breakdown and **STOP and wait** for the
    user's approval/correction before writing any implementation code. Mark the gate on the monitor:
@@ -112,6 +114,9 @@ On a stage-one HALT, the report's shape changes: `Status` = `⛔ halted — not 
 ```
 
 (Complex track: swap the `Root cause`/`Fix` rows for `Approach` + `Pieces` rows.)
+
+**Then, as your VERY LAST action — only on genuine completion (PR opened, or a clean stage-one HALT you are
+reporting), never when blocked or waiting at a gate — drop the done-latch so this tab turns magenta (§12).**
 
 ## 5. Recommended follow-ups (out of scope — discovered, NOT fixed)
 
@@ -277,3 +282,27 @@ until its migration is applied (or you've confirmed the PR adds none).** Full st
 
 If your hub does **not** configure a database (`database.enabled = false`), skip the migration step —
 just merge, verify the build/deploy, and report.
+
+## 12. Tab status latch (let the window reflect your state)
+
+The hub colors this worktree's terminal tab by state (blue = working · gold = waiting on you · green =
+idle). Two latch files you manage add two more states; both key off `$env:CLAUDE_TAB_SIGNAL` (set by the
+launcher — if it is empty, just skip these: they are best-effort and must never block your work).
+
+- **Complete → magenta.** As your **very last action**, and **only** when the work is genuinely finished
+  (PR opened, or a clean stage-one HALT you are reporting) — **never** on a blocked/at-gate stop — drop the
+  done-latch:
+  ```powershell
+  if ($env:CLAUDE_TAB_SIGNAL) { New-Item -ItemType File -Force "$env:CLAUDE_TAB_SIGNAL.done" | Out-Null }
+  ```
+- **Stopped, waiting on a background task → cyan.** When you end your turn to wait on a background task you
+  started (a `run_in_background` command/agent), drop the bgwait-latch as your last action — and **remove it
+  the moment you resume**:
+  ```powershell
+  if ($env:CLAUDE_TAB_SIGNAL) { New-Item -ItemType File -Force "$env:CLAUDE_TAB_SIGNAL.bgwait" | Out-Null }            # yielding to a bg task
+  if ($env:CLAUDE_TAB_SIGNAL) { Remove-Item -Force "$env:CLAUDE_TAB_SIGNAL.bgwait" -ErrorAction SilentlyContinue }     # on resume
+  ```
+
+The `Stop` hook resolves precedence **done → bgwait → idle**, and your next prompt from the user clears both
+latches automatically. Do **not** set the done-latch on a `blocked`/`spec-gate`/`halted` stop — those are not
+"complete" (use the matching ledger status from §8 instead).
