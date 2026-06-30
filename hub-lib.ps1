@@ -2,7 +2,7 @@
   hub-lib.ps1 - shared helpers for the claude-worktree-hub.
   Dot-source it:  . "$PSScriptRoot\hub-lib.ps1"
   Functions: ConvertTo-Slug, Get-IssueAttachmentUrls, Save-IssueImages,
-             ConvertTo-LocalLinks, Save-IssueBundle, Add-HubExclude, Copy-HubExperts
+             ConvertTo-LocalLinks, Save-IssueBundle, Save-IssuesIndex, Add-HubExclude, Copy-HubExperts
   Requires $HubConfig in scope: dot-source hub-config.ps1 before hub-lib.ps1.
 #>
 
