@@ -197,18 +197,21 @@ function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
 
     # advisory siblings: open (proposed) findings/recs matched to a cluster by scope-path (strong) or area (weak)
     $sib = @()
-    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), COALESCE(scope,''), COALESCE(topic,''), substr(replace(title,'|','/'),1,40) FROM finding WHERE status='proposed';")) {
+    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), replace(COALESCE(scope,''),'|','/'), replace(COALESCE(topic,''),'|','/'), substr(replace(title,'|','/'),1,40) FROM finding WHERE status='proposed';")) {
         if ($r) { $g = $r -split '\|', 5; $sib += [pscustomobject]@{ Type = 'finding'; Id = [int]$g[0]; Sev = $g[1]; Scope = $g[2]; Area = $g[3]; Title = $g[4] } }
     }
-    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), COALESCE(scope,''), COALESCE(area,''), substr(replace(title,'|','/'),1,40) FROM recommendation WHERE status='proposed';")) {
+    foreach ($r in @(& sqlite3 -separator '|' $Db "SELECT id, COALESCE(severity,'-'), replace(COALESCE(scope,''),'|','/'), replace(COALESCE(area,''),'|','/'), substr(replace(title,'|','/'),1,40) FROM recommendation WHERE status='proposed';")) {
         if ($r) { $g = $r -split '\|', 5; $sib += [pscustomobject]@{ Type = 'rec'; Id = [int]$g[0]; Sev = $g[1]; Scope = $g[2]; Area = $g[3]; Title = $g[4] } }
     }
     $sevRank = @{ 'Critical' = 0; 'High' = 1; 'Medium' = 2; 'Low' = 3 }
     foreach ($cl in $clusters) {
-        $pathNeedles = @(); $dirs = @()
+        # generic basenames are too common to be a STRONG path signal on their own -> demote to weak [path:base]
+        $genericBase = @('index.ts','index.tsx','index.js','index.jsx','types.ts','utils.ts','helpers.ts','constants.ts','config.ts','mod.ts','main.ts','__init__.py')
+        $strongNeedles = @(); $weakNeedles = @(); $dirs = @()
         foreach ($p in $cl.Files) {
-            $pathNeedles += $p
-            $pathNeedles += (($p -split '[\\/]')[-1])                       # basename
+            $strongNeedles += $p                                            # full path: always strong
+            $base = ($p -split '[\\/]')[-1]
+            if ($genericBase -contains $base.ToLowerInvariant()) { $weakNeedles += $base } else { $strongNeedles += $base }
             if ($p -match '[\\/]') { $dirs += ($p -replace '[\\/][^\\/]*$', '') }   # containing dir
         }
         $labelTokens = @()
@@ -219,13 +222,16 @@ function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
         $areaNeedles = @(@($dirs + $labelTokens) | Where-Object { $_ } | Sort-Object -Unique)
         $matched = @()
         foreach ($s in $sib) {
-            $isPath = $false
-            foreach ($n in $pathNeedles) { if ($n -and $s.Scope -like "*$n*") { $isPath = $true; break } }
-            $isArea = $false
-            if (-not $isPath -and $s.Area) { foreach ($n in $areaNeedles) { if ($n -and $s.Area -like "*$n*") { $isArea = $true; break } } }
-            if ($isPath -or $isArea) { $matched += [pscustomobject]@{ Type = $s.Type; Id = $s.Id; Sev = $s.Sev; Title = $s.Title; Why = $(if ($isPath) { 'path' } else { 'area' }) } }
+            $why = $null
+            foreach ($n in $strongNeedles) { if ($n) { $en = [System.Management.Automation.WildcardPattern]::Escape($n); if ($s.Scope -like "*$en*") { $why = 'path'; break } } }
+            if (-not $why) { foreach ($n in $weakNeedles) { if ($n) { $en = [System.Management.Automation.WildcardPattern]::Escape($n); if ($s.Scope -like "*$en*") { $why = 'path:base'; break } } } }
+            if (-not $why -and $s.Area) { foreach ($n in $areaNeedles) { if ($n) { $en = [System.Management.Automation.WildcardPattern]::Escape($n); if ($s.Area -like "*$en*") { $why = 'area'; break } } } }
+            if ($why) { $matched += [pscustomobject]@{ Type = $s.Type; Id = $s.Id; Sev = $s.Sev; Title = $s.Title; Why = $why } }
         }
-        $cl.Siblings = @($matched | Sort-Object @{ e = { if ($sevRank.ContainsKey($_.Sev)) { $sevRank[$_.Sev] } else { 4 } } }, Id)
+        $whyRank = @{ 'path' = 0; 'area' = 1; 'path:base' = 2 }
+        $cl.Siblings = @($matched | Sort-Object `
+            @{ e = { if ($sevRank.ContainsKey($_.Sev)) { $sevRank[$_.Sev] } else { 4 } } }, `
+            @{ e = { $whyRank[$_.Why] } }, Id)
     }
 
     return [pscustomobject]@{

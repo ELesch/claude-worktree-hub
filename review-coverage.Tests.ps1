@@ -341,7 +341,7 @@ Describe 'issue clusters' {
         & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/x.ts','owns'),(15,'src/lib/x.ts','owns'),(20,'src/lib/x.ts','owns');" | Out-Null
         & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('f','Medium','proposed','src/lib/x.ts','app/db');" | Out-Null
         & sqlite3 $db "INSERT INTO recommendation(title,severity,status,area) VALUES('r','Low','proposed','src/lib');" | Out-Null
-        $sig = "SELECT (SELECT count(*) FROM issue)||'/'||(SELECT count(*) FROM issue_target)||'/'||(SELECT count(*) FROM finding)||'/'||(SELECT count(*) FROM recommendation)||'/'||(SELECT count(*) FROM worktree)||'|'||COALESCE((SELECT group_concat(status) FROM finding),'')||'|'||COALESCE((SELECT group_concat(status) FROM recommendation),'');"
+        $sig = "SELECT (SELECT count(*) FROM issue)||'/'||(SELECT count(*) FROM issue_target)||'/'||(SELECT count(*) FROM finding)||'/'||(SELECT count(*) FROM recommendation)||'/'||(SELECT count(*) FROM worktree)||'/'||(SELECT count(*) FROM worktree_issue)||'|'||COALESCE((SELECT group_concat(status) FROM finding),'')||'|'||COALESCE((SELECT group_concat(status) FROM recommendation),'')||'|'||COALESCE((SELECT group_concat(review_status) FROM issue),'');"
         $before = & sqlite3 $db $sig
         & $script:rc issue clusters -DbPath $db 6>&1 | Out-Null
         $after = & sqlite3 $db $sig
@@ -426,5 +426,37 @@ Describe 'grouped-wave in-flight (membership union)' {
         & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
         $out = (& $script:rc monitor -DbPath $db 6>&1) -join "`n"
         $out | Should -Match '12 \(\+2\)'
+    }
+}
+
+Describe 'issue clusters sibling-precision hardening' {
+    It 'matches a needle containing [ ] literally (no wildcard char-class)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/app/[id].tsx','owns'),(15,'src/app/[id].tsx','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('dynamic route bug','Medium','proposed','fix src/app/[id].tsx render','app/route');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'finding #1.*\[path\]'   # [id].tsx matched literally, not as a char class
+    }
+    It 'does not corrupt parsing when a finding scope contains a pipe' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/q.ts','owns'),(15,'src/lib/q.ts','owns');" | Out-Null
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('piped scope','Medium','proposed','a|b in src/lib/q.ts','app/db');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'finding #1.*\[path\]'   # the pipe in scope did not shift the |-split parse
+    }
+    It 'demotes a generic basename to [path:base] but keeps a specific basename as [path]' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','user','Medium');" | Out-Null
+        # 12 & 15 share src/lib/shared.ts -> one cluster; files include the generic index.ts and the specific page-queries.ts
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/lib/shared.ts','owns'),(12,'src/lib/index.ts','owns'),(15,'src/lib/shared.ts','owns'),(15,'src/lib/page-queries.ts','owns');" | Out-Null
+        # finding mentions only the generic basename 'index.ts' (no dir) -> weak
+        & sqlite3 $db "INSERT INTO finding(title,severity,status,scope,topic) VALUES('generic','Low','proposed','something in index.ts somewhere','x');" | Out-Null
+        # rec mentions the specific basename 'page-queries.ts' -> strong
+        & sqlite3 $db "INSERT INTO recommendation(title,severity,status,scope) VALUES('specific','Low','proposed','page-queries.ts needs work');" | Out-Null
+        $out = (& $script:rc issue clusters -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'finding #1.*\[path:base\]'
+        $out | Should -Match 'rec     #1.*\[path\]'
     }
 }
