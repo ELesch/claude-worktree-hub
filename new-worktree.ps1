@@ -60,7 +60,7 @@ function Invoke-Git {
 }
 
 # Resolve the issue number: explicit -Issue, or inferred from an 'issue-<N>-...' name.
-if ($Issue -le 0 -and $Name -and $Name -match '^issue-(\d+)') { $Issue = [int]$Matches[1] }
+if (-not $isGrouped -and $Issue -le 0 -and $Name -and $Name -match '^issue-(\d+)') { $Issue = [int]$Matches[1] }
 
 # When only -Issue was given, derive the folder name from the issue title.
 if ($Issue -gt 0 -and -not $Name) {
