@@ -35,7 +35,8 @@ All repo-specific values come from `hub.config.json` (git-ignored; generated fro
 ├── .launchers\              <- generated per-worktree window launchers (re-runnable)
 ├── .issue-images\           <- issue screenshots downloaded with gh auth (untracked)
 ├── .review\                 <- coverage.db (SQLite ledger: topics, findings, activity; untracked)
-├── CLAUDE.md                <- this file (hub orchestration doc + registry)
+├── CLAUDE.md                <- this file (hub orchestration doc — durable rules/patterns/lessons)
+├── HUB-STATE.md             <- LIVE volatile state (current-state one-liner + process notes); @-mention it, update it (not CLAUDE.md)
 ├── WORKTREE.md              <- canonical STANDING RULES copied into every worktree + @-mentioned in its seed prompt
 ├── hub.config.example.json  <- config template (tracked); copy to hub.config.json and edit
 ├── hub.config.json          <- your config (git-ignored); loaded by hub-config.ps1
@@ -449,8 +450,8 @@ is a simple autonomous piece.
   name). Beyond it, use subagents.
 - **Gate first** — only decompose into child worktrees *after* the breakdown was approved.
 - **Subagents are the default** — most parallelism should never create a worktree.
-- Agent-spawned children appear in `git worktree list` (the source of truth); the registry table is
-  best-effort — reconcile from `git worktree list` when in doubt.
+- Agent-spawned children appear in `git worktree list` (the source of truth); the ledger's `worktree`
+  table is best-effort — reconcile from `git worktree list` when in doubt.
 
 **Integration (child → parent → default branch):**
 - Each child opens its PR with **base = the parent branch** (`gh pr create --base <parentBranch>`),
@@ -766,13 +767,24 @@ Replace `pnpm` with your configured `packageManager` / `installCmd` / `verifyCmd
 
 ---
 
-## Worktree registry (keep current)
+## Live state → `@HUB-STATE.md` + the ledger
 
-The managing session updates this table when a worktree is added or removed.
+The **live, volatile hub state lives OUTSIDE this file** so `CLAUDE.md` stays a stable, PR-reviewed
+rulebook (volatile edits here mean noisy diffs + merge collisions when parallel worktrees merge back):
 
-| Worktree folder | Branch | Purpose | Status | Created |
-|---|---|---|---|---|
-| `main` | `main` | Base / canonical worktree; source of `.env` for new worktrees | active | <date> |
+- **Per-worktree registry / monitoring → the SQLite ledger** (`.review\coverage.db`). The `worktree`
+  table is one row per worktree, status updated as it progresses; `.\review-coverage.ps1 monitor` is the
+  live view. That is the source of truth for "who's working / waiting / done" — do **not** keep a parallel
+  markdown registry table here.
+- **Current-state one-liner + small process notes → `HUB-STATE.md`** at the hub root (the volatile bits the
+  ledger doesn't capture: default-branch tip / what's staged or on hold / standing-backlog summary, plus a
+  running scratch for small orchestrator notes). **`@`-mention it (`@HUB-STATE.md`)** at the start of an
+  orchestrator session so it loads into context.
+
+**Updating state — edit `HUB-STATE.md` (or record to the ledger), NEVER this file, when:** a worktree is
+added/removed (ledger `register` / `progress` / `retired`), the default-branch tip moves, work advances, or
+you need a small process note. Durable rules, patterns, and lessons still belong here in `CLAUDE.md` /
+`WORKTREE.md`; only the volatile state + notes go in `HUB-STATE.md`.
 
 ---
 
@@ -781,7 +793,10 @@ The managing session updates this table when a worktree is added or removed.
 - The hub root is intentionally a bare repo: never `git init` here or convert it.
 - If `git worktree list` shows a worktree whose folder was deleted by hand, run
   `git worktree prune`.
-- When you (the orchestrator) create or remove a worktree, **update the registry table above**.
+- When you (the orchestrator) create or remove a worktree, record it in the **ledger** (`register` /
+  `progress` / `retired`; `.\review-coverage.ps1 monitor` is the live registry) — not a table in this file.
+  Put current-state + process notes in **`HUB-STATE.md`** (`@`-mentioned); never churn this file for
+  volatile state.
 - Helper scripts are `.ps1`; run them from the hub root.
 - Hub configuration lives in `hub.config.json` (git-ignored). Edit it to change repo, commands, or
   database settings. Use `hub.config.example.json` as the template.
