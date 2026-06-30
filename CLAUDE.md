@@ -361,8 +361,6 @@ Issue-specific steer: <issue-specific guidance>
 Begin.
 ```
 
-````markdown
-
 #### Grouped-wave solver prompt (one worktree → one PR closing N issues)
 
 When you provisioned a cluster with `new-worktree.ps1 -Issues 12,15,19`, seed the worktree with this
@@ -394,7 +392,6 @@ Wave-specific steer: <any per-member guidance>
 
 Begin.
 ```
-````
 
 **Complex worktrees** (multi-file / architectural / new subsystem / ambiguous or open-ended): use the
 **gated workflow** in the next section. Their prompt is **prepended with the `complexPromptPreamble`** from
