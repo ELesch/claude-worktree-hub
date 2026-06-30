@@ -203,7 +203,7 @@ Describe 'ledger-to-html includes consults' {
 }
 
 Describe 'ledger-to-html grouped worktree (+k) tag' {
-    It 'renders (+k) in the worktrees section for a grouped worktree' {
+    It 'renders (+k) and links only the primary issue number (valid href)' {
         $db = New-TempDb
         & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status) VALUES('cluster-12-x','solver',12,'working');" | Out-Null
         & sqlite3 $db "INSERT INTO worktree_issue(worktree,issue_number) VALUES('cluster-12-x',12),('cluster-12-x',15),('cluster-12-x',19);" | Out-Null
@@ -212,7 +212,34 @@ Describe 'ledger-to-html grouped worktree (+k) tag' {
         & $renderer -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
         $text = Get-Content $html -Raw
         $text | Should -Match 'Worktrees'
-        $text | Should -Match '\(\+2\)'
+        $text | Should -Match '\(\+2\)'   # data layer: the grouped tag rides along in the embedded DATA JSON
+
+        # The dashboard builds its table client-side, so the <a href> only exists after render() runs in a
+        # browser. Evaluate the embedded cell() renderer in node to prove the grouped issue cell links the
+        # BARE primary number (a valid href) rather than the whole "12 (+2)" string (which had produced a
+        # malformed .../issues/12 (+2) URL). Falls back to the data-layer assertion if node is unavailable.
+        if (Get-Command node -ErrorAction SilentlyContinue) {
+            $js  = [regex]::Match($text, '(?s)<script>(.*?)</script>').Groups[1].Value
+            $cut = $js.IndexOf('// sort on header click')   # keep the pure fns; drop the DOM tail + render() call
+            $cut | Should -BeGreaterThan 0 -Because 'the script tail marker must exist to slice the pure renderer'
+            $harness = $js.Substring(0, $cut) +
+                "console.log(cell({type:'issuelink'}, '12 (+2)'));`n" +   # grouped wave
+                "console.log(cell({type:'issuelink'}, '7'));`n" +         # plain single issue
+                "console.log(cell({type:'issuelink'}, ''));`n"            # empty
+            $jsFile = Join-Path $TestDrive 'cell-harness.js'
+            [System.IO.File]::WriteAllText($jsFile, $harness, (New-Object System.Text.UTF8Encoding($false)))
+            $out = (& node $jsFile 2>&1)
+            $LASTEXITCODE | Should -Be 0 -Because "node should evaluate the extracted renderer: $out"
+            $lines = @($out)
+            $lines[0] | Should -Match 'href="https://github\.com/acme/widgets/issues/12"'  # clean primary href
+            $lines[0] | Should -Match '\(\+2\)'                                            # suffix preserved...
+            $lines[0] | Should -Not -Match 'issues/12 \(\+2\)'                             # ...but OUTSIDE the href
+            $lines[1] | Should -Match 'href="https://github\.com/acme/widgets/issues/7"'   # plain case unchanged
+            $lines[1] | Should -Match '#7</a>'
+            $lines[2] | Should -Match 'muted'                                              # empty -> muted dot
+        } else {
+            Write-Warning 'node not found; skipped behavioral render check (data-layer (+2) still asserted)'
+        }
     }
 }
 

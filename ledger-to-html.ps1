@@ -321,10 +321,20 @@ SECTIONS.forEach(s => state[s.id] = { sortK:null, dir:1 });
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => (
   {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const slug = s => String(s==null?'':s).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+// Link only the primary issue number; a grouped-wave " (+k)" suffix renders as a muted, non-linked tag
+// (so the href stays a valid single-issue URL instead of ".../issues/12 (+2)").
+const issueCell = v => {
+  if(v==='' || v==null) return '<span class="muted">·</span>';
+  const m = String(v).match(/^(\d+)(.*)$/);
+  const num = m ? m[1] : String(v);
+  const suffix = m ? m[2] : '';
+  const link = `<a href="${issueUrl(num)}" target="_blank" rel="noopener">#${esc(num)}</a>`;
+  return suffix ? `${link}<span class="muted">${esc(suffix)}</span>` : link;
+};
 
 function cell(col, v){
   switch(col.type){
-    case 'issuelink': return v!=='' && v!=null ? `<a href="${issueUrl(v)}" target="_blank" rel="noopener">#${esc(v)}</a>` : '<span class="muted">·</span>';
+    case 'issuelink': return issueCell(v);
     case 'prlink':    return v!=='' && v!=null ? `<a href="${prUrl(v)}" target="_blank" rel="noopener">#${esc(v)}</a>` : '<span class="muted">·</span>';
     case 'severity':  return v ? `<span class="badge sev-${slug(v)}">${esc(v)}</span>` : '<span class="muted">·</span>';
     case 'status':    return v ? `<span class="badge st-${slug(v)}">${esc(v)}</span>` : '';
