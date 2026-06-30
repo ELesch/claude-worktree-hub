@@ -40,7 +40,7 @@ param(
     [string]$Worktree, [string]$WType, [string]$Event, [string]$Detail,
     [string]$Topic, [string]$Title, [string]$Severity = 'Medium', [string]$Category, [string]$Suggestion,
     [string]$Status = 'proposed',
-    [int]$Issue, [string]$Branch, [int]$Pr, [string]$Area, [string]$Note,
+    [int]$Issue, [int[]]$Issues, [string]$Branch, [int]$Pr, [string]$Area, [string]$Note,   # -Issues: grouped-wave membership (register)
     [string]$Verdict, [string]$Scope, [string]$FixedBy, [string]$Confidence, [string]$Related, [string]$DependsOn,
     [string]$Targets, [string]$Reads, [string]$Effort, [string]$Track,   # issue-review fields
     [int]$MaxIssues = 4, [int]$MaxFiles = 8,                              # issue clusters: per-cluster caps
@@ -278,6 +278,9 @@ CREATE TABLE IF NOT EXISTS issue_target(
 CREATE TABLE IF NOT EXISTS issue_link(
   id INTEGER PRIMARY KEY, issue_number INTEGER NOT NULL, related_number INTEGER NOT NULL,
   kind TEXT NOT NULL, note TEXT, created_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS worktree_issue(
+  id INTEGER PRIMARY KEY, worktree TEXT NOT NULL, issue_number INTEGER NOT NULL,
+  UNIQUE(worktree, issue_number));
 CREATE TABLE IF NOT EXISTS hubfinding(
   id INTEGER PRIMARY KEY, source TEXT, wtype TEXT, category TEXT, title TEXT NOT NULL, detail TEXT,
   severity TEXT, status TEXT DEFAULT 'open', target TEXT, resolution TEXT,
@@ -294,6 +297,8 @@ CREATE INDEX IF NOT EXISTS ix_finding_link_finding ON finding_link(finding_id);
 CREATE INDEX IF NOT EXISTS ix_issue_status ON issue(review_status);
 CREATE INDEX IF NOT EXISTS ix_issue_target_num ON issue_target(issue_number);
 CREATE INDEX IF NOT EXISTS ix_issue_target_path ON issue_target(path);
+CREATE INDEX IF NOT EXISTS ix_worktree_issue_wt ON worktree_issue(worktree);
+CREATE INDEX IF NOT EXISTS ix_worktree_issue_issue ON worktree_issue(issue_number);
 CREATE INDEX IF NOT EXISTS ix_hubfinding_status ON hubfinding(status);
 CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
 '@
@@ -477,9 +482,15 @@ CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
     'register' {
         if (-not $Worktree) { throw "register requires -Worktree" }
         $wt = q $Worktree; $wt2 = q $WType
-        Exec "INSERT INTO worktree(name,wtype,issue,branch,status,note,updated_at) VALUES('$wt','$wt2',$(NullableInt $Issue),'$(q $Branch)','registered','$(q $Note)',datetime('now')) ON CONFLICT(name) DO UPDATE SET wtype=excluded.wtype, issue=excluded.issue, branch=excluded.branch, updated_at=datetime('now');"
+        # Grouped wave: -Issues 12,15,19 records the lowest member as worktree.issue (display/back-compat)
+        # plus one worktree_issue row per member (the full membership). Single -Issue is unchanged (no join rows).
+        $members = @($Issues | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+        $primary = if ($members.Count) { [int]$members[0] } else { $Issue }
+        Exec "INSERT INTO worktree(name,wtype,issue,branch,status,note,updated_at) VALUES('$wt','$wt2',$(NullableInt $primary),'$(q $Branch)','registered','$(q $Note)',datetime('now')) ON CONFLICT(name) DO UPDATE SET wtype=excluded.wtype, issue=excluded.issue, branch=excluded.branch, updated_at=datetime('now');"
+        foreach ($m in $members) { Exec "INSERT OR IGNORE INTO worktree_issue(worktree,issue_number) VALUES('$wt',$m);" }
         Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('$wt','$wt2','registered','$(q $Branch)');"
-        Write-Host "registered worktree '$Worktree' (issue $Issue)." -ForegroundColor Green
+        $label = if ($members.Count -gt 1) { "issues $($members -join ',')" } else { "issue $primary" }
+        Write-Host "registered worktree '$Worktree' ($label)." -ForegroundColor Green
     }
 
     'progress' {

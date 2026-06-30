@@ -379,3 +379,22 @@ Describe 'issue clusters' {
         $out | Should -Match 'rec     #1.*\[area\]'
     }
 }
+
+Describe 'worktree_issue (grouped-wave membership)' {
+    It 'init creates the worktree_issue table and is idempotent' {
+        $db = New-TempDb
+        & $script:rc init -DbPath $db | Out-Null    # re-run init on an already-init'd db
+        (& sqlite3 $db "SELECT name FROM sqlite_master WHERE type='table' AND name='worktree_issue';") | Should -Be 'worktree_issue'
+    }
+    It 'register -Issues records the lowest as primary and one worktree_issue row per member' {
+        $db = New-TempDb
+        & $script:rc register -Worktree 'cluster-12-x' -WType solver -Issues 15,12,19 -Branch 'fix/cluster-12-x' -DbPath $db | Out-Null
+        (& sqlite3 $db "SELECT issue FROM worktree WHERE name='cluster-12-x';") | Should -Be '12'
+        (& sqlite3 $db "SELECT group_concat(issue_number) FROM (SELECT issue_number FROM worktree_issue WHERE worktree='cluster-12-x' ORDER BY issue_number);") | Should -Be '12,15,19'
+    }
+    It 'register -Issue (single) writes no worktree_issue rows' {
+        $db = New-TempDb
+        & $script:rc register -Worktree 'issue-42-y' -WType solver -Issue 42 -Branch 'fix/issue-42-y' -DbPath $db | Out-Null
+        (& sqlite3 $db "SELECT count(*) FROM worktree_issue WHERE worktree='issue-42-y';") | Should -Be '0'
+    }
+}
