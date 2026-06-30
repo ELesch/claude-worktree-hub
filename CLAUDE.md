@@ -225,6 +225,11 @@ to forget because worktrees are physically separate folders.
 # comments + metadata; issue-assets\ = screenshots downloaded with gh auth):
 .\new-worktree.ps1 -Issue 42 -Install        # requires the issue to be ledger-approved (gate)
 
+# Work a GROUPED WAVE from an `issue clusters` proposal (one worktree owning several approved issues):
+# auto-names cluster-<lowest>-<slug>, gates that EVERY member is approved, writes ISSUE-<n>.md per member +
+# an ISSUES.md cover sheet, and prints the matching `register -Issues` command:
+.\new-worktree.ps1 -Issues 12,15,19 -Install   # requires ALL members ledger-approved (gate)
+
 # New task on a brand-new branch (branches off latest origin/<defaultBranch>), copy env, install deps:
 .\new-worktree.ps1 -Name agent-my-task -Install
 
@@ -294,6 +299,8 @@ Add `--name <label>` and an initial prompt as usual — they forward to `claude`
 `.\review-coverage.ps1 monitor` tracks it from the start (the session then updates its own status):
 ```powershell
 & .\review-coverage.ps1 register -Worktree <folder> -WType solver -Issue <N> -Branch <branch>
+# grouped wave (one worktree, several issues) — links all members so in-flight/monitor see the full footprint:
+& .\review-coverage.ps1 register -Worktree <folder> -WType solver -Issues <N,M,...> -Branch <branch>
 ```
 
 ### Seeding the agent's task prompt — two tracks
@@ -353,6 +360,41 @@ Issue-specific steer: <issue-specific guidance>
 
 Begin.
 ```
+
+````markdown
+
+#### Grouped-wave solver prompt (one worktree → one PR closing N issues)
+
+When you provisioned a cluster with `new-worktree.ps1 -Issues 12,15,19`, seed the worktree with this
+variant — it `@`-mentions the `ISSUES.md` index plus every member brief, and tells the agent to close all
+members in one PR:
+
+```text
+@WORKTREE.md
+@ISSUES.md
+@ISSUE-12.md
+@ISSUE-15.md
+@ISSUE-19.md
+
+You are the autonomous solver for a GROUPED WAVE of GitHub issues #12, #15, #19 (repo <owner/repo>) — same
+area. Worktree: <FOLDER>   Branch: <BRANCH>
+
+WORKTREE.md (above) is your operating manual — follow it, especially §2a "Grouped waves". ISSUES.md is the
+wave cover sheet; each ISSUE-<n>.md is that member's full brief (all force-included above).
+
+You own ALL of these issues in this one worktree. Implement each member's fix on this branch, then open ONE
+PR whose body has one `Fixes #<n>` line per member (#12, #15, #19) so they all auto-close on merge. DO NOT
+merge.
+
+Stage one (before any code): run the stage-one product-necessity gate (WORKTREE.md §6a) ONCE for the wave,
+routed to <ROUTED PERSONA, default hub-product-owner>, judging EACH member. Drop or ask about any member the
+persona flags as not-necessary (per §2a) — do not halt the whole wave.
+
+Wave-specific steer: <any per-member guidance>
+
+Begin.
+```
+````
 
 **Complex worktrees** (multi-file / architectural / new subsystem / ambiguous or open-ended): use the
 **gated workflow** in the next section. Their prompt is **prepended with the `complexPromptPreamble`** from
@@ -593,6 +635,10 @@ running" for manual review. It also removes stale `~/.claude/hooks/tab-color-sig
 Steps when merging a finished PR:
 
 1. **Merge** the PR (`gh pr merge <N> --squash --delete-branch`, or as the user directs).
+   - **Grouped wave (one PR closing several issues):** the PR body carries one `Fixes #<n>` line per member,
+     so the single squash-merge auto-closes **every** member. In the merge report, render the issue row as
+     `Issues #12,#15,#19 (all auto-closed via Fixes)`. `progress -Status merged|retired` keys off the
+     worktree name, so it covers the whole wave; the next `issue sync` flips the closed members to `closed`.
 2. **Print the MERGE REPORT** — the final step, in the **same box-table format** the worktree used at
    completion, so each issue reads end-to-end. **Every issue's merge ends with this report.** Render it with
    the shared tool, pulling real values (don't hand-wave a field) from

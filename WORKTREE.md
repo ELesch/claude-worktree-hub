@@ -46,6 +46,25 @@ Work to the standard of a **professional app-development team**:
 If the fix turns out **larger or more architectural than expected**, switch to the gated track (section 3):
 write a **proper** `SPEC.md` + `PLAN.md` and **STOP for the user's review** before implementing.
 
+### 2a. Grouped waves (when your launch prompt names several issues)
+
+If your launch prompt says you own a **grouped wave** (several issues — e.g. `#12, #15, #19` — in this one
+worktree, with `@ISSUES.md` and one `@ISSUE-<n>.md` per member force-included), follow section 2 with these
+deltas:
+
+1. **One worktree, one branch, ONE PR.** Implement every member's fix on this branch; open a single PR whose
+   body carries **one `Fixes #<n>` line per member** (each on its own line) so GitHub closes them all on merge.
+2. **Stage-one product-necessity gate runs ONCE for the wave but judges EACH member** (§6a). Route the
+   persona by the wave's dominant area. If the persona flags a member as not-necessary, handle **that member
+   individually** per §6a (drop it or ask) — do **not** halt the whole wave; user-origin members are never
+   auto-HALTed. *Dropping a member* = don't implement it, omit its `Fixes #<n>` line, and surface it in the
+   completion report for the user to close or re-triage — never silently skipped.
+3. **Advisory siblings** listed in `ISSUES.md` are `proposed` findings/recs, **not** approved work. Fold one
+   in only if it is cheap and in-scope for files you are already touching; note any you address in the PR.
+   Otherwise leave them.
+4. **Completion report:** use the `Issues|#12,#15,#19 - <area>` form (one row), add a one-line per-member
+   acceptance summary, and keep every other field as in section 4.
+
 ## 3. Gated complex workflow (when the task is large / architectural / ambiguous)
 
 1. **Stage one — product-necessity gate (§6a):** before researching the build, consult the routed product

@@ -22,6 +22,7 @@
                [-Severity .. -Scope '..' -FixedBy '..' -Confidence .. -Note '..' -Related '12,15' -DependsOn '9' -Dismiss]
       resolve  -Id n [-Issue M]                                 (stamp completed_at + status=completed at merge)
       register -Worktree w -WType solver -Issue N -Branch b      (orchestrator: add a worktree to the monitor)
+      register -Worktree w -WType solver -Issues N,M,.. -Branch b (grouped wave: links all members)
       progress -Worktree w -Status <working|spec-gate|pr-open|merged|retired|blocked|failed> [-Pr M] [-Note d]
       recommend -Worktree w -Issue N -Title '..' [-Area a -Severity s -Detail d]   (solver: out-of-scope issue)
       monitor | recommendations [-Status proposed] | file-rec -Id n | dismiss-rec -Id n
@@ -800,7 +801,7 @@ LIMIT $lim;
                         }
                         if ($sibs.Count -gt 5) { Write-Host ("    +{0} more - see 'findings' / 'recommendations'" -f ($sibs.Count - 5)) -ForegroundColor DarkGray }
                     }
-                    Write-Host ("  -> Phase 2 will provision: new-worktree.ps1 -Issues {0}" -f (@($cl.Members) -join ',')) -ForegroundColor DarkCyan
+                    Write-Host ("  -> provision: new-worktree.ps1 -Issues {0}" -f (@($cl.Members) -join ',')) -ForegroundColor DarkCyan
                 }
                 if ($singletons.Count -or $notGrouped.Count) {
                     Write-Host "`nSingletons (approved, no overlap - use issue next / new-worktree -Issue N):" -ForegroundColor Cyan
@@ -828,7 +829,7 @@ LIMIT $lim;
         Write-Host "review-coverage.ps1 commands:"
         Write-Host "  coverage : init | seed | due [-N k] | run [-N k] | report | status [-N k]"
         Write-Host "  recon    : activity | finding | complete | findings [-Status s | -Unverified] | verify -Id n -Verdict v [..] | resolve -Id n | promote -Id n"
-        Write-Host "  worktree : register -Worktree w -WType solver -Issue N -Branch b"
+        Write-Host "  worktree : register -Worktree w -WType solver -Issue N -Branch b   (grouped wave: -Issues N,M,..)"
         Write-Host "             progress -Worktree w -Status <working|spec-gate|pr-open|merged|retired|blocked|failed> [-Pr M] [-Note ..]"
         Write-Host "             recommend -Worktree w -Issue N -Title '..' [-Area a -Severity s -Detail d]"
         Write-Host "             monitor | recommendations [-Status proposed] | file-rec -Id n | dismiss-rec -Id n"
