@@ -460,3 +460,24 @@ Describe 'issue clusters sibling-precision hardening' {
         $out | Should -Match 'rec     #1.*\[path\]'
     }
 }
+
+Describe 'Save-IssuesIndex (grouped-wave cover sheet)' {
+    BeforeAll { . (Join-Path $PSScriptRoot 'hub-lib.ps1') }
+    It 'writes ISSUES.md listing members, shared files, advisory siblings, and the one-PR rule' {
+        $dest = Join-Path $TestDrive ("wt-" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        $members = @(
+            [pscustomobject]@{ Number = 12; Title = 'page n+1'; Origin = 'user'; Severity = 'High' },
+            [pscustomobject]@{ Number = 15; Title = 'cache pages'; Origin = 'recon'; Severity = 'Medium' }
+        )
+        $sibs = @([pscustomobject]@{ Type = 'finding'; Id = 81; Sev = 'Medium'; Why = 'path'; Title = 'missing index' })
+        $p = Save-IssuesIndex -Dest $dest -Members $members -SharedPaths @('src/lib/page-queries.ts') -Siblings $sibs -Area 'src/lib'
+        Test-Path $p | Should -BeTrue
+        $txt = Get-Content $p -Raw
+        $txt | Should -Match 'issues #12, #15'
+        $txt | Should -Match 'ISSUE-12\.md'
+        $txt | Should -Match 'src/lib/page-queries\.ts'
+        $txt | Should -Match 'finding #81'
+        $txt | Should -Match 'Fixes #<n>'
+    }
+}
