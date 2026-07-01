@@ -12,3 +12,12 @@ Describe 'ConvertTo-Crlf' {
     }
     It 'handles the empty string'             { ConvertTo-Crlf '' | Should -Be '' }
 }
+
+Describe 'Test-HubSourceRemote' {
+    It 'accepts an https URL with .git'    { Test-HubSourceRemote 'https://github.com/ELesch/claude-worktree-hub.git' | Should -BeTrue }
+    It 'accepts an https URL without .git' { Test-HubSourceRemote 'https://github.com/ELesch/claude-worktree-hub'     | Should -BeTrue }
+    It 'accepts an ssh URL'                { Test-HubSourceRemote 'git@github.com:ELesch/claude-worktree-hub.git'      | Should -BeTrue }
+    It 'is case-insensitive'               { Test-HubSourceRemote 'https://github.com/elesch/Claude-Worktree-Hub'      | Should -BeTrue }
+    It 'rejects a different repo'          { Test-HubSourceRemote 'https://github.com/someone/other-repo.git'          | Should -BeFalse }
+    It 'rejects an empty string'           { Test-HubSourceRemote '' | Should -BeFalse }
+}

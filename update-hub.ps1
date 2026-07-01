@@ -32,6 +32,16 @@ function ConvertTo-Crlf {
     ($Text -replace "`r`n", "`n" -replace "`r", "`n") -replace "`n", "`r`n"
 }
 
+function Test-HubSourceRemote {
+    <# True if a git remote URL points at ELesch/claude-worktree-hub (https or ssh, +/- .git). #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$RemoteUrl)
+    $normalized = ($RemoteUrl.Trim() -replace '(?i)\.git/?$', '').TrimEnd('/')
+    if ($normalized -match '[:/](?<slug>[^/]+/[^/]+)$') {
+        return $Matches['slug'].ToLowerInvariant() -eq 'elesch/claude-worktree-hub'
+    }
+    return $false
+}
+
 # ---------- main (skipped when the script is dot-sourced, e.g. by the tests) ----------
 
 function Invoke-UpdateHub {
