@@ -21,3 +21,24 @@ Describe 'Test-HubSourceRemote' {
     It 'rejects a different repo'          { Test-HubSourceRemote 'https://github.com/someone/other-repo.git'          | Should -BeFalse }
     It 'rejects an empty string'           { Test-HubSourceRemote '' | Should -BeFalse }
 }
+
+Describe 'Get-HubUpdateSkipList' {
+    It 'excludes HUB-STATE.md'      { Get-HubUpdateSkipList | Should -Contain 'HUB-STATE.md' }
+    It 'does not exclude CLAUDE.md' { Get-HubUpdateSkipList | Should -Not -Contain 'CLAUDE.md' }
+}
+
+Describe 'Get-OverlayAction' {
+    It "returns 'new' when the target is missing" {
+        Get-OverlayAction -SourceNorm "a`r`nb" -TargetContent '' -TargetExists:$false | Should -Be 'new'
+    }
+    It "returns 'unchanged' when only the line endings differ" {
+        $src = ConvertTo-Crlf "line1`nline2"
+        Get-OverlayAction -SourceNorm $src -TargetContent "line1`nline2" -TargetExists | Should -Be 'unchanged'
+    }
+    It "returns 'unchanged' when identical (already CRLF)" {
+        Get-OverlayAction -SourceNorm "a`r`nb" -TargetContent "a`r`nb" -TargetExists | Should -Be 'unchanged'
+    }
+    It "returns 'updated' when the content really differs" {
+        Get-OverlayAction -SourceNorm "a`r`nb" -TargetContent "a`r`nCHANGED" -TargetExists | Should -Be 'updated'
+    }
+}

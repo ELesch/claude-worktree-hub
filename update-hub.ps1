@@ -42,6 +42,25 @@ function Test-HubSourceRemote {
     return $false
 }
 
+function Get-HubUpdateSkipList {
+    <# Tracked files that are per-deployment volatile and must NOT be overlaid. #>
+    @('HUB-STATE.md')
+}
+
+function Get-OverlayAction {
+    <# Decide the overlay action for one file: 'new' | 'updated' | 'unchanged'.
+       $SourceNorm is the CRLF-normalized SOURCE content; $TargetContent is the raw target
+       content (ignored unless -TargetExists). EOL-only differences => 'unchanged'. #>
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$SourceNorm,
+        [AllowNull()][AllowEmptyString()][string]$TargetContent,
+        [switch]$TargetExists
+    )
+    if (-not $TargetExists) { return 'new' }
+    if ($SourceNorm -ceq (ConvertTo-Crlf $TargetContent)) { return 'unchanged' }
+    return 'updated'
+}
+
 # ---------- main (skipped when the script is dot-sourced, e.g. by the tests) ----------
 
 function Invoke-UpdateHub {
