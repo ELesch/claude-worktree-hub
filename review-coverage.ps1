@@ -406,6 +406,49 @@ ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate'
         Query "SELECT id, worktree, expert, COALESCE(area,'') AS area, COALESCE(followed,'') AS followed, substr(question,1,45) AS question FROM consult ORDER BY id DESC LIMIT $N;"
     }
 
+    # ---- batch tracking: a persisted collection of worktree sessions (a fired wave) ----
+    'batch' {
+        switch ($Sub) {
+            'set' {
+                if (-not $Id) { throw "batch set requires -Id <batch number>" }
+                $cols = @('id'); $vals = @("$Id"); $cset = @("updated_at=datetime('now')")
+                if ($Title) { $cols += 'label'; $vals += "'$(q $Title)'"; $cset += 'label=excluded.label' }
+                if ($PSBoundParameters.ContainsKey('Status')) { $cols += 'status'; $vals += "'$(q $Status)'"; $cset += 'status=excluded.status' }
+                if ($Note) { $cols += 'notes'; $vals += "'$(q $Note)'"; $cset += 'notes=excluded.notes' }
+                $cols += 'updated_at'; $vals += "datetime('now')"
+                Exec "INSERT INTO batch($($cols -join ',')) VALUES($($vals -join ',')) ON CONFLICT(id) DO UPDATE SET $($cset -join ', ');"
+                $st = (& sqlite3 $db "SELECT status FROM batch WHERE id=$Id;")
+                Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('orchestrator','batch','$(q $st)','batch $Id');"
+                Write-Host "batch $Id recorded ($st)." -ForegroundColor Green
+            }
+            'show' {
+                if (-not $Id) { throw "batch show requires -Id <batch number>" }
+                Query "SELECT id, COALESCE(label,'') AS label, status, datetime(updated_at) AS updated FROM batch WHERE id=$Id;"
+                Write-Host "`n-- notes --" -ForegroundColor DarkGray
+                Query "SELECT COALESCE(notes,'(none)') AS notes FROM batch WHERE id=$Id;"
+                Write-Host "`n-- worktrees (sets) in batch $Id --" -ForegroundColor DarkGray
+                Query @"
+SELECT name,
+  CASE WHEN (SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name) > 1
+       THEN COALESCE(CAST(issue AS TEXT),'') || ' (+' || ((SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name)-1) || ')'
+       ELSE COALESCE(CAST(issue AS TEXT),'') END AS issues,
+  COALESCE(pr,'') AS pr, status
+FROM worktree WHERE batch=$Id ORDER BY issue;
+"@
+            }
+            'list' {
+                Query @"
+SELECT b.id, COALESCE(b.label,'') AS label, b.status,
+  (SELECT count(*) FROM worktree w WHERE w.batch=b.id) AS sets,
+  (SELECT count(*) FROM worktree w WHERE w.batch=b.id AND w.status IN ('merged','retired')) AS done,
+  datetime(b.updated_at) AS updated
+FROM batch b ORDER BY b.id DESC LIMIT $N;
+"@
+            }
+            default { Write-Host "batch sub-commands: set -Id N [-Title label -Status in-process|merged|retired|aborted -Note '...'] | show -Id N | list" }
+        }
+    }
+
     'recommendations' { Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, status, COALESCE(github_issue,'') AS gh, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='$(q $Status)' ORDER BY id LIMIT $N;" }
 
     'file-rec' {

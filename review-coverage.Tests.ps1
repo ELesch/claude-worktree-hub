@@ -627,3 +627,36 @@ Describe 'ConvertTo-BatchSets' {
         $r.Deferred[0].Lowest | Should -Be 24
     }
 }
+
+Describe 'batch verb' {
+    It 'batch set creates a batch (in-process by default)' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 -Title 'auth hardening' | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT id,label,status FROM batch WHERE id=5;") | Should -Be '5|auth hardening|in-process'
+    }
+    It 'batch set -Status updates the lifecycle without touching the label' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 -Title 'keep me' | Out-Null
+        & $script:rc batch set -DbPath $db -Id 5 -Status merged | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT label,status FROM batch WHERE id=5;") | Should -Be 'keep me|merged'
+    }
+    It 'batch set requires -Id' {
+        $db = New-TempDb
+        { & $script:rc batch set -DbPath $db -Title 'x' } | Should -Throw
+    }
+    It 'batch list shows the batch and its set/done counts' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,status,batch) VALUES('w1','working',5),('w2','merged',5);" | Out-Null
+        $out = (& $script:rc batch list -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match '\b5\b'
+        (& sqlite3 $db "SELECT (SELECT count(*) FROM worktree WHERE batch=5)||'/'||(SELECT count(*) FROM worktree WHERE batch=5 AND status IN ('merged','retired'));") | Should -Be '2/1'
+    }
+    It 'batch show lists the member worktrees' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 7 | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,status,batch,issue) VALUES('issue-9-x','working',7,9);" | Out-Null
+        $out = (& $script:rc batch show -DbPath $db -Id 7 6>&1) -join "`n"
+        $out | Should -Match 'issue-9-x'
+    }
+}
