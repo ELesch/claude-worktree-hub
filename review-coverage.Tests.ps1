@@ -567,3 +567,23 @@ Describe 'batch schema' {
         (& sqlite3 -separator '|' $p "SELECT name,status,COALESCE(batch,'null') FROM worktree WHERE name='old-wt';") | Should -Be 'old-wt|working|null'
     }
 }
+
+Describe 'ledger-lib Get-IssueClusterPlan (direct)' {
+    BeforeAll { . (Join-Path $PSScriptRoot 'ledger-lib.ps1') }
+    It 'clusters two simple approved issues that share an owned file' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','recon','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/x.ts','owns'),(15,'src/x.ts','owns');" | Out-Null
+        $plan = Get-IssueClusterPlan $db 4 8
+        @($plan.Clusters).Count | Should -Be 1
+        ($plan.Clusters[0].Members -join ',') | Should -Be '12,15'
+        @($plan.Singletons).Count | Should -Be 0
+    }
+    It 'returns a singleton for a lone approved simple issue' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(30,'solo','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(30,'src/solo.ts','owns');" | Out-Null
+        $plan = Get-IssueClusterPlan $db 4 8
+        @($plan.Singletons) | Should -Contain 30
+    }
+}
