@@ -41,7 +41,7 @@ param(
     [string]$Worktree, [string]$WType, [string]$Event, [string]$Detail,
     [string]$Topic, [string]$Title, [string]$Severity = 'Medium', [string]$Category, [string]$Suggestion,
     [string]$Status = 'proposed',
-    [int]$Issue, [int[]]$Issues, [string]$Branch, [int]$Pr, [string]$Area, [string]$Note,   # -Issues: grouped-wave membership (register)
+    [int]$Issue, [int[]]$Issues, [string]$Branch, [int]$Pr, [int]$Batch, [string]$Area, [string]$Note,   # -Issues: grouped-wave membership; -Batch: batch link (register)
     [string]$Verdict, [string]$Scope, [string]$FixedBy, [string]$Confidence, [string]$Related, [string]$DependsOn,
     [string]$Targets, [string]$Reads, [string]$Effort, [string]$Track,   # issue-review fields
     [int]$MaxIssues = 4, [int]$MaxFiles = 8,                              # issue clusters: per-cluster caps
@@ -356,7 +356,10 @@ CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
         # plus one worktree_issue row per member (the full membership). Single -Issue is unchanged (no join rows).
         $members = @($Issues | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
         $primary = if ($members.Count) { [int]$members[0] } else { $Issue }
-        Exec "INSERT INTO worktree(name,wtype,issue,branch,status,note,updated_at) VALUES('$wt','$wt2',$(NullableInt $primary),'$(q $Branch)','registered','$(q $Note)',datetime('now')) ON CONFLICT(name) DO UPDATE SET wtype=excluded.wtype, issue=excluded.issue, branch=excluded.branch, updated_at=datetime('now');"
+        $bCol = if ($Batch -gt 0) { ',batch' } else { '' }
+        $bVal = if ($Batch -gt 0) { ",$Batch" } else { '' }
+        $bSet = if ($Batch -gt 0) { ', batch=excluded.batch' } else { '' }
+        Exec "INSERT INTO worktree(name,wtype,issue,branch,status,note,updated_at$bCol) VALUES('$wt','$wt2',$(NullableInt $primary),'$(q $Branch)','registered','$(q $Note)',datetime('now')$bVal) ON CONFLICT(name) DO UPDATE SET wtype=excluded.wtype, issue=excluded.issue, branch=excluded.branch, updated_at=datetime('now')$bSet;"
         foreach ($m in $members) { Exec "INSERT OR IGNORE INTO worktree_issue(worktree,issue_number) VALUES('$wt',$m);" }
         Exec "INSERT INTO activity(worktree,wtype,event,detail) VALUES('$wt','$wt2','registered','$(q $Branch)');"
         $label = if ($members.Count -gt 1) { "issues $($members -join ',')" } else { "issue $primary" }

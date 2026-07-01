@@ -660,3 +660,22 @@ Describe 'batch verb' {
         $out | Should -Match 'issue-9-x'
     }
 }
+
+Describe 'register -Batch' {
+    It 'stamps worktree.batch' {
+        $db = New-TempDb
+        & $script:rc register -DbPath $db -Worktree 'issue-9-x' -WType solver -Issue 9 -Branch 'fix/issue-9-x' -Batch 5 | Out-Null
+        (& sqlite3 $db "SELECT batch FROM worktree WHERE name='issue-9-x';") | Should -Be '5'
+    }
+    It 'without -Batch leaves batch NULL' {
+        $db = New-TempDb
+        & $script:rc register -DbPath $db -Worktree 'w' -WType solver -Issue 9 -Branch 'b' | Out-Null
+        (& sqlite3 $db "SELECT COALESCE(batch,'null') FROM worktree WHERE name='w';") | Should -Be 'null'
+    }
+    It 'composes with -Issues (grouped set) and still stamps batch' {
+        $db = New-TempDb
+        & $script:rc register -DbPath $db -Worktree 'cluster-9-x' -WType solver -Issues 9,11 -Branch 'b' -Batch 5 | Out-Null
+        (& sqlite3 $db "SELECT batch FROM worktree WHERE name='cluster-9-x';") | Should -Be '5'
+        (& sqlite3 $db "SELECT count(*) FROM worktree_issue WHERE worktree='cluster-9-x';") | Should -Be '2'
+    }
+}
