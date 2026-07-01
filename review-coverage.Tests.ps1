@@ -545,3 +545,25 @@ Describe 'grouped provisioning helpers' {
         $bad[0].Status | Should -Be 'not synced'
     }
 }
+
+Describe 'batch schema' {
+    It 'init creates the batch table, worktree.batch column, and its index' {
+        $db = New-TempDb
+        (& sqlite3 $db "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='batch';") | Should -Be '1'
+        (& sqlite3 $db "SELECT count(*) FROM pragma_table_info('worktree') WHERE name='batch';") | Should -Be '1'
+        (& sqlite3 $db "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='ix_worktree_batch';") | Should -Be '1'
+    }
+    It 'is idempotent (re-init does not error or duplicate the batch table)' {
+        $db = New-TempDb
+        { & $script:rc init -DbPath $db | Out-Null } | Should -Not -Throw
+        (& sqlite3 $db "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='batch';") | Should -Be '1'
+    }
+    It 'migrates a pre-existing worktree table that lacks the batch column' {
+        $p = Join-Path $TestDrive ("old-" + [guid]::NewGuid().ToString('N') + ".db")
+        & sqlite3 $p "CREATE TABLE worktree(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, wtype TEXT, issue INTEGER, branch TEXT, pr INTEGER, status TEXT DEFAULT 'registered', note TEXT);" | Out-Null
+        & sqlite3 $p "INSERT INTO worktree(name,status) VALUES('old-wt','working');" | Out-Null
+        & $script:rc init -DbPath $p | Out-Null
+        (& sqlite3 $p "SELECT count(*) FROM pragma_table_info('worktree') WHERE name='batch';") | Should -Be '1'
+        (& sqlite3 -separator '|' $p "SELECT name,status,COALESCE(batch,'null') FROM worktree WHERE name='old-wt';") | Should -Be 'old-wt|working|null'
+    }
+}

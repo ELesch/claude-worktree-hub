@@ -302,6 +302,11 @@ CREATE TABLE IF NOT EXISTS consult(
   id INTEGER PRIMARY KEY, worktree TEXT, wtype TEXT, expert TEXT NOT NULL, area TEXT, issue INTEGER,
   question TEXT NOT NULL, advice TEXT, decision TEXT, followed TEXT, rationale TEXT,
   created_at TEXT DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS batch(
+  id INTEGER PRIMARY KEY,                          -- batch number (auto-assigned by new-batch.ps1; or explicit)
+  label TEXT, status TEXT DEFAULT 'in-process',    -- in-process -> merged -> retired | aborted
+  notes TEXT,                                      -- plan + results: anchors, migrations carried, what dropped/deferred
+  created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
 CREATE INDEX IF NOT EXISTS ix_activity_at ON activity(at);
 CREATE INDEX IF NOT EXISTS ix_finding_status ON finding(status);
 CREATE INDEX IF NOT EXISTS ix_worktree_status ON worktree(status);
@@ -321,6 +326,10 @@ CREATE INDEX IF NOT EXISTS ix_consult_expert ON consult(expert);
             $have = @((& sqlite3 $db "SELECT name FROM pragma_table_info('$t');") -split "`r?`n" | ForEach-Object { $_.Trim() })
             foreach ($c in $verifyCols.Keys) { if ($have -notcontains $c) { Exec "ALTER TABLE $t ADD COLUMN $c $($verifyCols[$c]);" } }
         }
+        # add worktree.batch (grouping link) + index if missing (pre-existing DBs); fresh DBs get it here too
+        $wtHave = @((& sqlite3 $db "SELECT name FROM pragma_table_info('worktree');") -split "`r?`n" | ForEach-Object { $_.Trim() })
+        if ($wtHave -notcontains 'batch') { Exec "ALTER TABLE worktree ADD COLUMN batch INTEGER;" }
+        Exec "CREATE INDEX IF NOT EXISTS ix_worktree_batch ON worktree(batch);"
         Write-Host "initialized $db" -ForegroundColor Green
     }
 
