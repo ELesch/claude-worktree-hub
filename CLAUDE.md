@@ -80,6 +80,7 @@ All repo-specific values come from `hub.config.json` (git-ignored; generated fro
 ├── launch-recon-fleet.ps1   <- helper: launch a FLEET of recon worktrees (one per surface) for a token burst
 ├── review-coverage.ps1      <- helper: SQLite coverage ledger (topics/findings/activity) + scheduler
 ├── ledger-to-html.ps1       <- helper: render the OPEN ledger items (issues/findings/recs/worktrees) to ONE self-contained HTML dashboard + open in Chrome
+├── ledger-explorer.ps1      <- helper: render the ENTIRE ledger (all tables) to ONE interactive offline HTML explorer (per-entity faceted views + a click-to-traverse detail drawer) + open in Chrome
 ├── hub-lib.ps1              <- shared functions for the helpers (issue bundle, slug, images)
 ├── main\                    <- base worktree, tracks the default branch
 ├── agent-*\                 <- one isolated worktree per parallel task (created on demand)
@@ -165,6 +166,7 @@ fan-out (one subagent per finding); it writes only verdicts/links to the ledger,
 .\review-coverage.ps1 resolve -Id 81 -Issue 701              # stamp completed_at + status=completed when the fix merges
 .\review-coverage.ps1 monitor                                # live status of EVERY worktree + pending follow-ups + recent consults
 .\ledger-to-html.ps1                                         # render ALL open items -> ONE self-contained HTML dashboard + open in Chrome (-NoOpen to just write it)
+.\ledger-explorer.ps1                                        # DEEP counterpart: the ENTIRE ledger (every table) as ONE interactive offline HTML explorer -- sidebar per entity, faceted filters, click-to-traverse detail drawer (-NoOpen to just write it)
 .\review-coverage.ps1 recommendations ; .\review-coverage.ps1 file-rec -Id 3   # solver follow-up triage -> GH issue
 # --- hub findings (problems with the hub's OWN prompts/config/scripts/memory/env) ---
 .\review-coverage.ps1 hubfind -Worktree <folder|orchestrator> -Category <env|tool|prompt|config|memory|other> -Title '..' -Detail '..' [-Severity ..]   # log one (any worktree or the orchestrator)
