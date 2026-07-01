@@ -163,3 +163,32 @@ function Get-IssueClusterPlan([string]$Db, [int]$MaxI, [int]$MaxF) {
         Meta = $meta; OwnPaths = $ownPaths
     }
 }
+
+# Pure: turn a Get-IssueClusterPlan result into an ordered list of SETS (each = one worktree),
+# applying the -Only/-Exclude/-MaxSets edit filters. Clusters first (engine priority), then singletons.
+# A set reduced to one member by filtering becomes Kind='single'. Returns { Sets=[..]; Deferred=[..] }.
+function ConvertTo-BatchSets {
+    param([Parameter(Mandatory)]$Plan, [int[]]$Only, [int[]]$Exclude, [int]$MaxSets = 0)
+    $only = @($Only | Where-Object { $_ -gt 0 })
+    $excl = @($Exclude | Where-Object { $_ -gt 0 })
+    $raw = [System.Collections.Generic.List[object]]::new()
+    foreach ($cl in @($Plan.Clusters)) { $raw.Add([pscustomobject]@{ Members = @($cl.Members); Files = @($cl.Files); Siblings = @($cl.Siblings) }) }
+    foreach ($n in @($Plan.Singletons)) { $raw.Add([pscustomobject]@{ Members = @([int]$n); Files = @(); Siblings = @() }) }
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($s in $raw) {
+        $m = @($s.Members)
+        if ($only.Count) { $m = @($m | Where-Object { $only -contains $_ }) }
+        if ($excl.Count) { $m = @($m | Where-Object { $excl -notcontains $_ }) }
+        if (-not $m.Count) { continue }
+        $m = @($m | Sort-Object -Unique)
+        $out.Add([pscustomobject]@{
+            Kind = if ($m.Count -gt 1) { 'cluster' } else { 'single' }
+            Members = $m; Lowest = [int]$m[0]; Files = @($s.Files); Siblings = @($s.Siblings)
+        })
+    }
+    $fired = @($out); $deferred = @()
+    if ($MaxSets -gt 0 -and $out.Count -gt $MaxSets) {
+        $fired = @($out[0..($MaxSets - 1)]); $deferred = @($out[$MaxSets..($out.Count - 1)])
+    }
+    [pscustomobject]@{ Sets = $fired; Deferred = $deferred }
+}

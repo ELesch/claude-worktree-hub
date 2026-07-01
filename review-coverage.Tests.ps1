@@ -587,3 +587,43 @@ Describe 'ledger-lib Get-IssueClusterPlan (direct)' {
         @($plan.Singletons) | Should -Contain 30
     }
 }
+
+Describe 'ConvertTo-BatchSets' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'ledger-lib.ps1')
+        function FakePlan($clusters, $singletons) {
+            [pscustomobject]@{ Clusters = @($clusters); Singletons = @($singletons)
+                NotGrouped = @(); DeferOverCap = @(); DeferInFlight = @(); Meta = @{}; OwnPaths = @{} }
+        }
+    }
+    It 'maps clusters then singletons to sets, in order' {
+        $plan = FakePlan @([pscustomobject]@{ Members=@(12,15); Files=@('src/x.ts'); Siblings=@() }) @(20,22)
+        $r = ConvertTo-BatchSets -Plan $plan
+        @($r.Sets).Count | Should -Be 3
+        $r.Sets[0].Kind | Should -Be 'cluster'
+        ($r.Sets[0].Members -join ',') | Should -Be '12,15'
+        $r.Sets[1].Kind | Should -Be 'single'
+        $r.Sets[1].Lowest | Should -Be 20
+    }
+    It '-Exclude drops issues and demotes a reduced cluster to a single' {
+        $plan = FakePlan @([pscustomobject]@{ Members=@(12,15); Files=@(); Siblings=@() }) @(20)
+        $r = ConvertTo-BatchSets -Plan $plan -Exclude @(15)
+        @($r.Sets).Count | Should -Be 2
+        $r.Sets[0].Kind | Should -Be 'single'
+        ($r.Sets[0].Members -join ',') | Should -Be '12'
+    }
+    It '-Only restricts sets to the listed issues' {
+        $plan = FakePlan @([pscustomobject]@{ Members=@(12,15); Files=@(); Siblings=@() }) @(20)
+        $r = ConvertTo-BatchSets -Plan $plan -Only @(12,20)
+        @($r.Sets).Count | Should -Be 2
+        ($r.Sets[0].Members -join ',') | Should -Be '12'
+        $r.Sets[1].Lowest | Should -Be 20
+    }
+    It '-MaxSets caps the fired sets and defers the rest (priority order)' {
+        $plan = FakePlan @() @(20,22,24)
+        $r = ConvertTo-BatchSets -Plan $plan -MaxSets 2
+        @($r.Sets).Count | Should -Be 2
+        @($r.Deferred).Count | Should -Be 1
+        $r.Deferred[0].Lowest | Should -Be 24
+    }
+}
