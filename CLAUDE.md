@@ -13,6 +13,27 @@
 > work tree`). That is expected. All real work happens inside a worktree subfolder
 > (`main\`, `agent-*\`, …), each of which has its own project-level `CLAUDE.md`.
 
+## Updating the hub itself
+
+This hub's **tooling** — the `.ps1` scripts, `CLAUDE.md`, `WORKTREE.md`, the `.claude\agents\hub-*` experts,
+the docs — is tracked in the upstream repo **`ELesch/claude-worktree-hub`**. To pull the latest tooling into
+**this deployment**, run `update-hub.ps1` **from this hub root**:
+
+```powershell
+.\update-hub.ps1 -DryRun   # preview exactly which files would change (writes nothing)
+.\update-hub.ps1           # pull latest, then overlay the tracked tooling files
+```
+
+It reads from a pristine **source clone** (default `C:\mydev\claude-worktree-hub`; override with `-Source
+<path>`, validated to be a clone of `ELesch/claude-worktree-hub`), refreshes it (`git pull --ff-only`; skip
+with `-NoPull`), then copies only the **tracked** files onto this hub — reporting which changed and treating
+files that differ only in line endings (CRLF vs LF) as unchanged. **Your runtime data is never touched:**
+`hub.config.json`, the `.review\` ledger, the worktrees, `.env*`, and `PRODUCT.md` are gitignored upstream, so
+they aren't part of the overlay — and **`HUB-STATE.md` is preserved** even though it's tracked, because it
+holds this deployment's live state. Because this section lives in the tracked `CLAUDE.md`, it ships to every
+deployment and survives the next update — so any change to the update process itself belongs **upstream**, not
+in a deployment's copy.
+
 ## Repository
 
 All repo-specific values come from `hub.config.json` (git-ignored; generated from `hub.config.example.json` during `.\setup-hub.ps1`, which calls `.\init-hub.ps1`).
@@ -44,6 +65,7 @@ All repo-specific values come from `hub.config.json` (git-ignored; generated fro
 ├── claude-launch.ps1        <- bundled session wrapper (delegates to personal tab-color hook if present)
 ├── init-hub.ps1             <- bootstrap: bare clone + .git pointer + base worktree + config gen
 ├── setup-hub.ps1            <- interactive first-run wizard (bootstrap + config + ledger + env + prereqs)
+├── update-hub.ps1           <- helper: overlay this deployment's tracked tooling files from the source clone (self-update; -DryRun to preview)
 ├── hub-doctor.ps1           <- non-interactive readiness report (exit 0 ready / 1 blockers)
 ├── hub-checks.ps1           <- shared readiness-check library (single source of truth for "ready")
 ├── new-worktree.ps1         <- helper: provision a worktree (use -Issue <N> for issue work)
