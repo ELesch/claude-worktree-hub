@@ -718,3 +718,35 @@ Describe 'Get-BatchFirePlan' {
         $p[1].Register.Batch | Should -Be 5
     }
 }
+
+Describe 'new-batch preview (read-only)' {
+    BeforeAll { $script:nb = $PSCommandPath.Replace('review-coverage.Tests.ps1', 'new-batch.ps1') }
+    It 'previews the approved wave without provisioning or mutating the ledger' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'page n+1','approved','simple','user','High'),(15,'cache pages','approved','simple','recon','Medium'),(30,'solo fix','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/page-queries.ts','owns'),(15,'src/page-queries.ts','owns'),(30,'src/solo.ts','owns');" | Out-Null
+        $sig = "SELECT (SELECT count(*) FROM worktree)||'/'||(SELECT count(*) FROM batch)||'/'||(SELECT count(*) FROM worktree_issue);"
+        $before = & sqlite3 $db $sig
+        $out = (& $script:nb -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Batch 1 preview'
+        $out | Should -Match '#12'
+        $out | Should -Match '#15'
+        $out | Should -Match '#30'
+        $out | Should -Match 'preview only'
+        (& sqlite3 $db $sig) | Should -Be $before
+    }
+    It '-Exclude removes an issue from the previewed wave' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','recon','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/x.ts','owns'),(15,'src/x.ts','owns');" | Out-Null
+        $out = (& $script:nb -DbPath $db -Exclude 15 6>&1) -join "`n"
+        $out | Should -Match '#12'
+        $out | Should -Not -Match '#15'
+    }
+    It 'reports no eligible wave when nothing is approved' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(40,'wip','synced','simple','user','High');" | Out-Null
+        $out = (& $script:nb -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'no eligible'
+    }
+}
