@@ -545,3 +545,245 @@ Describe 'grouped provisioning helpers' {
         $bad[0].Status | Should -Be 'not synced'
     }
 }
+
+Describe 'batch schema' {
+    It 'init creates the batch table, worktree.batch column, and its index' {
+        $db = New-TempDb
+        (& sqlite3 $db "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='batch';") | Should -Be '1'
+        (& sqlite3 $db "SELECT count(*) FROM pragma_table_info('worktree') WHERE name='batch';") | Should -Be '1'
+        (& sqlite3 $db "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='ix_worktree_batch';") | Should -Be '1'
+    }
+    It 'is idempotent (re-init does not error or duplicate the batch table)' {
+        $db = New-TempDb
+        { & $script:rc init -DbPath $db | Out-Null } | Should -Not -Throw
+        (& sqlite3 $db "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='batch';") | Should -Be '1'
+    }
+    It 'migrates a pre-existing worktree table that lacks the batch column' {
+        $p = Join-Path $TestDrive ("old-" + [guid]::NewGuid().ToString('N') + ".db")
+        & sqlite3 $p "CREATE TABLE worktree(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, wtype TEXT, issue INTEGER, branch TEXT, pr INTEGER, status TEXT DEFAULT 'registered', note TEXT);" | Out-Null
+        & sqlite3 $p "INSERT INTO worktree(name,status) VALUES('old-wt','working');" | Out-Null
+        & $script:rc init -DbPath $p | Out-Null
+        (& sqlite3 $p "SELECT count(*) FROM pragma_table_info('worktree') WHERE name='batch';") | Should -Be '1'
+        (& sqlite3 -separator '|' $p "SELECT name,status,COALESCE(batch,'null') FROM worktree WHERE name='old-wt';") | Should -Be 'old-wt|working|null'
+    }
+}
+
+Describe 'ledger-lib Get-IssueClusterPlan (direct)' {
+    BeforeAll { . (Join-Path $PSScriptRoot 'ledger-lib.ps1') }
+    It 'clusters two simple approved issues that share an owned file' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','recon','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/x.ts','owns'),(15,'src/x.ts','owns');" | Out-Null
+        $plan = Get-IssueClusterPlan $db 4 8
+        @($plan.Clusters).Count | Should -Be 1
+        ($plan.Clusters[0].Members -join ',') | Should -Be '12,15'
+        @($plan.Singletons).Count | Should -Be 0
+    }
+    It 'returns a singleton for a lone approved simple issue' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(30,'solo','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(30,'src/solo.ts','owns');" | Out-Null
+        $plan = Get-IssueClusterPlan $db 4 8
+        @($plan.Singletons) | Should -Contain 30
+    }
+}
+
+Describe 'ConvertTo-BatchSets' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'ledger-lib.ps1')
+        function FakePlan($clusters, $singletons) {
+            [pscustomobject]@{ Clusters = @($clusters); Singletons = @($singletons)
+                NotGrouped = @(); DeferOverCap = @(); DeferInFlight = @(); Meta = @{}; OwnPaths = @{} }
+        }
+    }
+    It 'maps clusters then singletons to sets, in order' {
+        $plan = FakePlan @([pscustomobject]@{ Members=@(12,15); Files=@('src/x.ts'); Siblings=@() }) @(20,22)
+        $r = ConvertTo-BatchSets -Plan $plan
+        @($r.Sets).Count | Should -Be 3
+        $r.Sets[0].Kind | Should -Be 'cluster'
+        ($r.Sets[0].Members -join ',') | Should -Be '12,15'
+        $r.Sets[1].Kind | Should -Be 'single'
+        $r.Sets[1].Lowest | Should -Be 20
+    }
+    It '-Exclude drops issues and demotes a reduced cluster to a single' {
+        $plan = FakePlan @([pscustomobject]@{ Members=@(12,15); Files=@(); Siblings=@() }) @(20)
+        $r = ConvertTo-BatchSets -Plan $plan -Exclude @(15)
+        @($r.Sets).Count | Should -Be 2
+        $r.Sets[0].Kind | Should -Be 'single'
+        ($r.Sets[0].Members -join ',') | Should -Be '12'
+    }
+    It '-Only restricts sets to the listed issues' {
+        $plan = FakePlan @([pscustomobject]@{ Members=@(12,15); Files=@(); Siblings=@() }) @(20)
+        $r = ConvertTo-BatchSets -Plan $plan -Only @(12,20)
+        @($r.Sets).Count | Should -Be 2
+        ($r.Sets[0].Members -join ',') | Should -Be '12'
+        $r.Sets[1].Lowest | Should -Be 20
+    }
+    It '-MaxSets caps the fired sets and defers the rest (priority order)' {
+        $plan = FakePlan @() @(20,22,24)
+        $r = ConvertTo-BatchSets -Plan $plan -MaxSets 2
+        @($r.Sets).Count | Should -Be 2
+        @($r.Deferred).Count | Should -Be 1
+        $r.Deferred[0].Lowest | Should -Be 24
+    }
+}
+
+Describe 'batch verb' {
+    It 'batch set creates a batch (in-process by default)' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 -Title 'auth hardening' | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT id,label,status FROM batch WHERE id=5;") | Should -Be '5|auth hardening|in-process'
+    }
+    It 'batch set -Status updates the lifecycle without touching the label' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 -Title 'keep me' | Out-Null
+        & $script:rc batch set -DbPath $db -Id 5 -Status merged | Out-Null
+        (& sqlite3 -separator '|' $db "SELECT label,status FROM batch WHERE id=5;") | Should -Be 'keep me|merged'
+    }
+    It 'batch set requires -Id' {
+        $db = New-TempDb
+        { & $script:rc batch set -DbPath $db -Title 'x' } | Should -Throw
+    }
+    It 'batch list shows the batch and its set/done counts' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,status,batch) VALUES('w1','working',5),('w2','merged',5);" | Out-Null
+        $out = (& $script:rc batch list -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match '\b5\b'
+        (& sqlite3 $db "SELECT (SELECT count(*) FROM worktree WHERE batch=5)||'/'||(SELECT count(*) FROM worktree WHERE batch=5 AND status IN ('merged','retired'));") | Should -Be '2/1'
+    }
+    It 'batch show lists the member worktrees' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 7 | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,status,batch,issue) VALUES('issue-9-x','working',7,9);" | Out-Null
+        $out = (& $script:rc batch show -DbPath $db -Id 7 6>&1) -join "`n"
+        $out | Should -Match 'issue-9-x'
+    }
+}
+
+Describe 'register -Batch' {
+    It 'stamps worktree.batch' {
+        $db = New-TempDb
+        & $script:rc register -DbPath $db -Worktree 'issue-9-x' -WType solver -Issue 9 -Branch 'fix/issue-9-x' -Batch 5 | Out-Null
+        (& sqlite3 $db "SELECT batch FROM worktree WHERE name='issue-9-x';") | Should -Be '5'
+    }
+    It 'without -Batch leaves batch NULL' {
+        $db = New-TempDb
+        & $script:rc register -DbPath $db -Worktree 'w' -WType solver -Issue 9 -Branch 'b' | Out-Null
+        (& sqlite3 $db "SELECT COALESCE(batch,'null') FROM worktree WHERE name='w';") | Should -Be 'null'
+    }
+    It 'composes with -Issues (grouped set) and still stamps batch' {
+        $db = New-TempDb
+        & $script:rc register -DbPath $db -Worktree 'cluster-9-x' -WType solver -Issues 9,11 -Branch 'b' -Batch 5 | Out-Null
+        (& sqlite3 $db "SELECT batch FROM worktree WHERE name='cluster-9-x';") | Should -Be '5'
+        (& sqlite3 $db "SELECT count(*) FROM worktree_issue WHERE worktree='cluster-9-x';") | Should -Be '2'
+    }
+}
+
+Describe 'monitor batch awareness' {
+    It 'still lists worktrees (no regression)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status,batch) VALUES('issue-9-x','solver',9,'working',5);" | Out-Null
+        $out = (& $script:rc monitor -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'issue-9-x'
+    }
+    It 'shows an Open batches section listing open batches by label' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 -Title 'wave5' | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,status,batch) VALUES('w1','working',5);" | Out-Null
+        $out = (& $script:rc monitor -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Batches'
+        $out | Should -Match 'wave5'
+    }
+}
+
+Describe 'Get-BatchFirePlan' {
+    BeforeAll { . (Join-Path $PSScriptRoot 'ledger-lib.ps1') }
+    It 'builds provision + register splats per set (single and cluster)' {
+        $sets = @(
+            [pscustomobject]@{ Kind = 'single'; Members = @(9); Lowest = 9 },
+            [pscustomobject]@{ Kind = 'cluster'; Members = @(12, 15); Lowest = 12 }
+        )
+        $names = @{ 9 = @{ Name = 'issue-9-x'; Branch = 'fix/issue-9-x' }; 12 = @{ Name = 'cluster-12-y'; Branch = 'fix/cluster-12-y' } }
+        $p = Get-BatchFirePlan -Sets $sets -NameMap $names -BatchId 5
+        @($p).Count | Should -Be 2
+        $p[0].Provision.Name  | Should -Be 'issue-9-x'
+        $p[0].Provision.Issue | Should -Be 9
+        $p[0].Provision.ContainsKey('Issues') | Should -BeFalse
+        $p[0].Register.Issue  | Should -Be 9
+        $p[0].Register.Batch  | Should -Be 5
+        ($p[1].Provision.Issues -join ',') | Should -Be '12,15'
+        $p[1].Provision.ContainsKey('Issue') | Should -BeFalse
+        ($p[1].Register.Issues -join ',') | Should -Be '12,15'
+        $p[1].Register.Batch | Should -Be 5
+    }
+}
+
+Describe 'new-batch preview (read-only)' {
+    BeforeAll { $script:nb = $PSCommandPath.Replace('review-coverage.Tests.ps1', 'new-batch.ps1') }
+    It 'previews the approved wave without provisioning or mutating the ledger' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'page n+1','approved','simple','user','High'),(15,'cache pages','approved','simple','recon','Medium'),(30,'solo fix','approved','simple','user','High');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/page-queries.ts','owns'),(15,'src/page-queries.ts','owns'),(30,'src/solo.ts','owns');" | Out-Null
+        $sig = "SELECT (SELECT count(*) FROM worktree)||'/'||(SELECT count(*) FROM batch)||'/'||(SELECT count(*) FROM worktree_issue);"
+        $before = & sqlite3 $db $sig
+        $out = (& $script:nb -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Batch 1 preview'
+        $out | Should -Match '#12'
+        $out | Should -Match '#15'
+        $out | Should -Match '#30'
+        $out | Should -Match 'preview only'
+        (& sqlite3 $db $sig) | Should -Be $before
+    }
+    It '-Exclude removes an issue from the previewed wave' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(12,'a','approved','simple','user','High'),(15,'b','approved','simple','recon','Medium');" | Out-Null
+        & sqlite3 $db "INSERT INTO issue_target(issue_number,path,ownership) VALUES(12,'src/x.ts','owns'),(15,'src/x.ts','owns');" | Out-Null
+        $out = (& $script:nb -DbPath $db -Exclude 15 6>&1) -join "`n"
+        $out | Should -Match '#12'
+        $out | Should -Not -Match '#15'
+    }
+    It 'reports no eligible wave when nothing is approved' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO issue(number,title,review_status,track,origin,severity) VALUES(40,'wip','synced','simple','user','High');" | Out-Null
+        $out = (& $script:nb -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'no eligible'
+    }
+}
+
+Describe 'new-batch fire guards' {
+    BeforeAll { $script:nb = $PSCommandPath.Replace('review-coverage.Tests.ps1', 'new-batch.ps1') }
+    It 'with -Yes on an empty wave: aborts with "nothing to fire" and creates no batch row' {
+        $db = New-TempDb
+        { & $script:nb -DbPath $db -Fire -Yes 6>$null } | Should -Throw -ExpectedMessage '*nothing to fire*'
+        (& sqlite3 $db "SELECT count(*) FROM batch;") | Should -Be '0'
+    }
+}
+
+Describe 'ledger-explorer batch view' {
+    BeforeAll { $script:expl = $PSCommandPath.Replace('review-coverage.Tests.ps1', 'ledger-explorer.ps1') }
+    It 'embeds the batch entity and links a worktree to its batch' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 -Title 'wave5' | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status,batch) VALUES('issue-9-x','solver',9,'working',5);" | Out-Null
+        $html = Join-Path $TestDrive 'expl.html'
+        & $script:expl -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
+        $txt = Get-Content $html -Raw
+        $txt | Should -Match '"batches"\s*:'
+        $txt | Should -Match 'wave5'
+        $txt | Should -Match '"batch"\s*:\s*"?5'
+    }
+}
+
+Describe 'ledger-to-html batch column' {
+    BeforeAll { $script:l2h = $PSCommandPath.Replace('review-coverage.Tests.ps1', 'ledger-to-html.ps1') }
+    It 'carries batch in the worktrees data and declares the column' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status,batch) VALUES('issue-9-x','solver',9,'working',7);" | Out-Null
+        $html = Join-Path $TestDrive 'oi.html'
+        & $script:l2h -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
+        $txt = Get-Content $html -Raw
+        $txt | Should -Match '"batch"\s*:\s*"?7'
+        $txt | Should -Match "\{k:'batch'"
+    }
+}

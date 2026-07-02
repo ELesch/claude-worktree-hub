@@ -64,6 +64,8 @@ deltas:
    Otherwise leave them.
 4. **Completion report:** use the `Issues|#12,#15,#19 - <area>` form (one row), add a one-line per-member
    acceptance summary, and keep every other field as in section 4.
+5. **Batch membership.** Your worktree may belong to a **batch** (a wave fired together via `new-batch.ps1`) —
+   this is grouping only; the deltas above are unchanged. The orchestrator rolls the batch up at merge.
 
 ## 3. Gated complex workflow (when the task is large / architectural / ambiguous)
 
