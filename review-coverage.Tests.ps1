@@ -774,3 +774,16 @@ Describe 'ledger-explorer batch view' {
         $txt | Should -Match '"batch"\s*:\s*"?5'
     }
 }
+
+Describe 'ledger-to-html batch column' {
+    BeforeAll { $script:l2h = $PSCommandPath.Replace('review-coverage.Tests.ps1', 'ledger-to-html.ps1') }
+    It 'carries batch in the worktrees data and declares the column' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status,batch) VALUES('issue-9-x','solver',9,'working',7);" | Out-Null
+        $html = Join-Path $TestDrive 'oi.html'
+        & $script:l2h -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
+        $txt = Get-Content $html -Raw
+        $txt | Should -Match '"batch"\s*:\s*"?7'
+        $txt | Should -Match "\{k:'batch'"
+    }
+}

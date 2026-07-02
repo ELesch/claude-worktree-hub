@@ -129,7 +129,7 @@ SELECT name, wtype AS type,
   (SELECT count(DISTINCT t.path) FROM issue_target t WHERE t.ownership='owns' AND t.issue_number IN (
      SELECT worktree.issue UNION SELECT wi.issue_number FROM worktree_issue wi WHERE wi.worktree=worktree.name)) AS owns,
   (SELECT count(*) FROM recommendation r WHERE r.worktree=worktree.name AND r.status='proposed') AS recs,
-  COALESCE(branch,'') AS branch, COALESCE(note,'') AS note
+  COALESCE(branch,'') AS branch, COALESCE(batch,'') AS batch, COALESCE(note,'') AS note
 FROM worktree
 WHERE status!='retired'
 ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate' THEN 2 WHEN 'working' THEN 3
@@ -311,6 +311,7 @@ const SECTIONS = [
     {k:'owns',label:'Owns',type:'num'},
     {k:'recs',label:'Recs',type:'num'},
     {k:'branch',label:'Branch'},
+    {k:'batch',label:'Batch'},
     {k:'note',label:'Note',type:'long'},
   ]},
 ];
