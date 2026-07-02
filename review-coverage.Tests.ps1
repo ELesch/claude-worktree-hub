@@ -750,3 +750,12 @@ Describe 'new-batch preview (read-only)' {
         $out | Should -Match 'no eligible'
     }
 }
+
+Describe 'new-batch fire guards' {
+    BeforeAll { $script:nb = $PSCommandPath.Replace('review-coverage.Tests.ps1', 'new-batch.ps1') }
+    It 'with -Yes on an empty wave: aborts with "nothing to fire" and creates no batch row' {
+        $db = New-TempDb
+        { & $script:nb -DbPath $db -Fire -Yes 6>$null } | Should -Throw -ExpectedMessage '*nothing to fire*'
+        (& sqlite3 $db "SELECT count(*) FROM batch;") | Should -Be '0'
+    }
+}
