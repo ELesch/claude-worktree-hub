@@ -69,6 +69,7 @@ All repo-specific values come from `hub.config.json` (git-ignored; generated fro
 ├── hub-doctor.ps1           <- non-interactive readiness report (exit 0 ready / 1 blockers)
 ├── hub-checks.ps1           <- shared readiness-check library (single source of truth for "ready")
 ├── new-worktree.ps1         <- helper: provision a worktree (use -Issue <N> for issue work)
+├── new-batch.ps1            <- helper: PLAN-AND-FIRE a batch — compose a wave, preview, fire the fleet (one worktree per set)
 ├── remove-worktree.ps1      <- helper: tear a worktree down (worktree + branch only; leaves window + folder)
 ├── retire-worktree.ps1      <- helper: FULLY retire finished worktree(s) (kill terminal + remove + rm -rf + branch + prune)
 ├── cleanup-worktree-processes.ps1 <- helper: COMPLETE sweep of processes left by CLOSED worktrees (dry-run default; -Execute)
@@ -82,6 +83,7 @@ All repo-specific values come from `hub.config.json` (git-ignored; generated fro
 ├── ledger-to-html.ps1       <- helper: render the OPEN ledger items (issues/findings/recs/worktrees) to ONE self-contained HTML dashboard + open in Chrome
 ├── ledger-explorer.ps1      <- helper: render the ENTIRE ledger (all tables) to ONE interactive offline HTML explorer (per-entity faceted views + a click-to-traverse detail drawer) + open in Chrome
 ├── hub-lib.ps1              <- shared functions for the helpers (issue bundle, slug, images)
+├── ledger-lib.ps1          <- shared: q + Get-IssueClusterPlan + ConvertTo-BatchSets + Get-BatchFirePlan (dot-sourced by review-coverage.ps1 + new-batch.ps1)
 ├── main\                    <- base worktree, tracks the default branch
 ├── agent-*\                 <- one isolated worktree per parallel task (created on demand)
 ├── issue-<N>-*\             <- issue worktree; also contains ISSUE.md + issue-assets\ (git-excluded)
@@ -184,6 +186,9 @@ fan-out (one subagent per finding); it writes only verdicts/links to the ledger,
 .\review-coverage.ps1 issue approve -Id 42                   # human checkpoint: reviewed -> approved (clears the worktree gate)
 .\review-coverage.ps1 issue next -N 8                        # the OVERLAP-AWARE selector: highest-priority approved wave, file-disjoint
 .\review-coverage.ps1 issue clusters [-MaxIssues 4 -MaxFiles 8]  # GROUPED-WAVE proposal: bundle approved simple issues that overlap on owned files (capped) + advisory same-area proposed findings/recs (read-only; companion to 'next')
+.\new-batch.ps1                                              # PREVIEW the next plan-and-fire wave (read-only); -Fire [-Yes] to launch; -Exclude/-Only/-MaxSets to edit
+.\review-coverage.ps1 batch set -Id N [-Title l -Status in-process|merged|retired|aborted -Note '..'] | batch show -Id N | batch list   # batch tier
+.\review-coverage.ps1 register -Worktree w -WType solver -Issue N -Branch b -Batch N   # stamp a worktree's batch (new-batch does this per set)
 ```
 Worktree-facing (recon agents call): `activity -Worktree w -WType recon -Event started`,
 `finding -Worktree w -Topic t -Title … -Severity … …`, `complete -Topic t -Worktree w`.
@@ -229,6 +234,23 @@ scope/severity carried over. See the **Issue lane** section above for the full d
 
 **Overlap semantics:** two issues *conflict* when both **own** the same path (blocks co-scheduling);
 different files in the same directory is a *soft* note (shown, non-blocking) — the judgement call stays yours.
+
+### Batches (plan-and-fire waves) — Phase 3
+
+A **batch** is a persisted collection of worktree sessions fired as one wave; a **set** is the issues one
+worktree owns (a singleton or a `worktree_issue` cluster). Where `issue next`/`issue clusters` only *propose*
+a wave, **`new-batch.ps1`** persists and fires it:
+
+- **`.\new-batch.ps1`** — read-only PREVIEW (the default): composes the overlap-aware wave (reusing
+  `Get-IssueClusterPlan`) and prints each set → its issues, owned paths, advisory siblings, and deferrals.
+  Safe to run and paste back. Edit the wave with **`-Exclude N,…` / `-Only N,…` / `-MaxSets k`** (+ `-MaxIssues`/`-MaxFiles` caps), then re-preview.
+- **`.\new-batch.ps1 -Fire`** (interactive confirm) or **`-Fire -Yes`** (scripted) — creates the `batch` row,
+  then per set: `new-worktree.ps1 -Issue`/`-Issues` (the approval gate still applies) → `register … -Batch` →
+  a seeded launcher opened through the windowed wrapper (solver / grouped-wave prompt). `-NoLaunch` provisions
+  without opening windows; `-SkipReview` bypasses the gate (emergencies only). Never headless (Critical rule #7).
+- **Track it:** `review-coverage.ps1 monitor` shows an Open-batches section + a batch column; `batch show -Id N`
+  lists the batch's worktrees and their member issues; the explorer + dashboard have a Batch view/column.
+- **Lifecycle:** `in-process → merged → retired | aborted`, set with `review-coverage.ps1 batch set -Id N -Status …`.
 
 ---
 
@@ -664,6 +686,11 @@ Steps when merging a finished PR:
      so the single squash-merge auto-closes **every** member. In the merge report, render the issue row as
      `Issues #12,#15,#19 (all auto-closed via Fixes)`. `progress -Status merged|retired` keys off the
      worktree name, so it covers the whole wave; the next `issue sync` flips the closed members to `closed`.
+   - **Batch rollup.** If the merged worktree belongs to a **batch** (`worktree.batch` set; `batch show -Id N`),
+     merge/report each member PR as usual; when the LAST set of the batch merges, flip it
+     (`.\review-coverage.ps1 batch set -Id N -Status merged`, then `retired` after teardown) and render a batch
+     box-table with `format-report.ps1` fed by `batch show -Id N` (one row per set: worktree · issues · PR ·
+     state, plus migrations applied across the batch and any dropped/deferred members).
 2. **Print the MERGE REPORT** — the final step, in the **same box-table format** the worktree used at
    completion, so each issue reads end-to-end. **Every issue's merge ends with this report.** Render it with
    the shared tool, pulling real values (don't hand-wave a field) from

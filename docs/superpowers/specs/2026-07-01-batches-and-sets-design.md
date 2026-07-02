@@ -196,12 +196,11 @@ worktree upsert (INSERT column + `ON CONFLICT … DO UPDATE SET batch=excluded.b
 register activity row. Composes with both `-Issue` (singleton set) and `-Issues` (cluster set) from Phase 2 —
 `new-batch.ps1` calls exactly one `register` per set with the right issue arg **plus** `-Batch`.
 
-## 5. `monitor` batch grouping
+## 5. `monitor` batch awareness
 
-`monitor` already lists active worktrees with their owns-count. Add batch awareness: when any active worktree
-has a non-NULL `batch`, group the active rows under a **batch header** (`── batch N "label" — 3/5 done ──`) with
-batch-less worktrees under an "ungrouped" header, preserving the existing per-row columns (status, owns, issue
-`P (+k)`). Purely presentational; no new state. Ungrouped-only hubs render exactly as today.
+`monitor` gains a `batch` column on each worktree row (`COALESCE(batch,'') AS batch`) and a new "Open batches"
+summary section (`id · label · sets · done` for `status='in-process'` batches), so a fired wave is visible at a
+glance. Purely presentational; the passthrough `Query` helper is kept (no bespoke grouped renderer for v1).
 
 ## 6. `new-batch.ps1` — compose + preview (the default, read-only)
 
