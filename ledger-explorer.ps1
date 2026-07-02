@@ -116,7 +116,7 @@ FROM recommendation ORDER BY id;
 
 $qWorktrees = Get-Json @"
 SELECT name, COALESCE(wtype,'') AS wtype, COALESCE(issue,'') AS issue, COALESCE(branch,'') AS branch,
-  COALESCE(pr,'') AS pr, status, COALESCE(note,'') AS note,
+  COALESCE(pr,'') AS pr, status, COALESCE(batch,'') AS batch, COALESCE(note,'') AS note,
   substr(COALESCE(created_at,''),1,16) AS created_at, substr(COALESCE(updated_at,''),1,16) AS updated_at,
   CAST((julianday('now')-julianday(updated_at))*1440 AS INT) AS age_min,
   (SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name) AS members,
@@ -144,6 +144,15 @@ FROM run ORDER BY id DESC;
 $qInventory = Get-Json "SELECT id, kind, name, COALESCE(area,'') AS area, importance FROM inventory ORDER BY kind, area, name;"
 
 $qWtIssues = Get-Json "SELECT worktree, issue_number AS num FROM worktree_issue ORDER BY worktree, issue_number;"
+
+$qBatches = Get-Json @"
+SELECT id, COALESCE(label,'') AS label, status,
+  substr(COALESCE(created_at,''),1,16) AS created_at, substr(COALESCE(updated_at,''),1,16) AS updated_at,
+  (SELECT count(*) FROM worktree w WHERE w.batch=batch.id) AS sets,
+  (SELECT count(*) FROM worktree w WHERE w.batch=batch.id AND w.status IN ('merged','retired')) AS done,
+  COALESCE(notes,'') AS notes
+FROM batch ORDER BY id DESC;
+"@
 
 $qHubFindings = Get-Json @"
 SELECT id, COALESCE(source,'') AS source, COALESCE(wtype,'') AS wtype, COALESCE(category,'') AS category,
@@ -177,6 +186,7 @@ $dataJson = "{`n" + (@(
         '"recommendations": ' + $qRecs
         '"worktrees": ' + $qWorktrees
         '"worktree_issues": ' + $qWtIssues
+        '"batches": ' + $qBatches
         '"hubfindings": ' + $qHubFindings
         '"consults": ' + $qConsults
         '"topics": ' + $qTopics
@@ -427,6 +437,7 @@ const IX = {
   finding:new Map(DATA.findings.map(r=>[String(r.id), r])),
   rec:    new Map(DATA.recommendations.map(r=>[String(r.id), r])),
   worktree:new Map(DATA.worktrees.map(r=>[String(r.name), r])),
+  batch:new Map(DATA.batches.map(r=>[String(r.id), r])),
   hubfinding:new Map(DATA.hubfindings.map(r=>[String(r.id), r])),
   consult:new Map(DATA.consults.map(r=>[String(r.id), r])),
   topic:  new Map(DATA.topics.map(r=>[String(r.id), r])),
@@ -469,6 +480,7 @@ DATA.worktree_issues.forEach(m=>{ const w=IX.worktree.get(m.worktree); if(w) lin
 const recByWt   = new Map(); DATA.recommendations.forEach(r=>{ if(has(r.worktree)) (recByWt.get(r.worktree)||recByWt.set(r.worktree,[]).get(r.worktree)).push(r); });
 const actByWt   = new Map(); DATA.activity.forEach(a=>{ if(has(a.worktree)) (actByWt.get(a.worktree)||actByWt.set(a.worktree,[]).get(a.worktree)).push(a); });
 const consultByWt   = new Map(); DATA.consults.forEach(c=>{ if(has(c.worktree)) (consultByWt.get(c.worktree)||consultByWt.set(c.worktree,[]).get(c.worktree)).push(c); });
+const wtByBatch = new Map();     DATA.worktrees.forEach(w=>{ if(has(w.batch)) (wtByBatch.get(String(w.batch))||wtByBatch.set(String(w.batch),[]).get(String(w.batch))).push(w); });
 const consultByIssue= new Map(); DATA.consults.forEach(c=>{ if(has(c.issue)) (consultByIssue.get(String(c.issue))||consultByIssue.set(String(c.issue),[]).get(String(c.issue))).push(c); });
 const runByTopic= new Map(); DATA.runs.forEach(r=>{ if(has(r.topic_id)) (runByTopic.get(String(r.topic_id))||runByTopic.set(String(r.topic_id),[]).get(String(r.topic_id))).push(r); });
 const findByRun = new Map(); DATA.findings.forEach(f=>{ if(has(f.run_id)) (findByRun.get(String(f.run_id))||findByRun.set(String(f.run_id),[]).get(String(f.run_id))).push(f); });
@@ -510,6 +522,13 @@ const ENTITIES = {
       {k:'age_min',label:'Age(m)',type:'num'},{k:'owns',label:'Owns',type:'num'},{k:'recs',label:'Recs',type:'num'},
       {k:'branch',label:'Branch'},{k:'updated_at',label:'Updated',type:'date'}],
     facets:['wtype','status'] },
+  batches: { title:'Batches', icon:'🧺', key:'id', rows:DATA.batches,
+    open:r=>r.status!=='retired'&&r.status!=='aborted',
+    cols:[
+      {k:'id',label:'Batch',type:'title'},{k:'label',label:'Label'},{k:'status',label:'Status',...B_ST},
+      {k:'sets',label:'Sets',type:'num'},{k:'done',label:'Done',type:'num'},
+      {k:'created_at',label:'Created',type:'date'},{k:'updated_at',label:'Updated',type:'date'}],
+    facets:['status'] },
   topics: { title:'Coverage', icon:'🗺️', key:'id', rows:DATA.topics,
     open:r=>r.enabled==1,
     cols:[
@@ -548,7 +567,7 @@ const ENTITIES = {
       {k:'event',label:'Event',type:'status'},{k:'detail',label:'Detail',type:'clip',wrap:1}],
     facets:['event','wtype','worktree'] },
 };
-const ORDER = ['issues','findings','recommendations','hubfindings','consults','worktrees','topics','runs','inventory','activity'];
+const ORDER = ['issues','findings','recommendations','hubfindings','consults','worktrees','batches','topics','runs','inventory','activity'];
 // precompute injected columns (e.g. issue overlaps) so filter/sort/search see them
 Object.values(ENTITIES).forEach(e=>{ if(e.inject) e.rows.forEach(r=>Object.assign(r, e.inject(r))); });
 
@@ -807,8 +826,21 @@ const DETAIL = {
           : chipRow('Issue', iss?chip('issue',r.issue,'#'+r.issue+' · '+(iss.title||'').slice(0,42)):''))
       + chipRow('Recommendations raised', recs.map(x=>chip('rec',x.id,'#'+x.id+' · '+(x.title||'').slice(0,38),x.severity)).join(''))
       + chipRow('Consults logged', cons.map(c=>chip('consult',c.id,c.expert+(has(c.followed)?' · '+c.followed:''),c.area)).join(''))
+      + (has(r.batch)?chipRow('Batch', chip('batch', r.batch, 'batch '+r.batch)):'')
       + (acts.length?`<div class="dsec"><h4>Activity <span style="color:#c8cdd6">${(actByWt.get(r.name)||[]).length}</span></h4><div class="tl">`+
           acts.map(a=>`<div class="ev"><b>${esc(a.event)}</b>${has(a.detail)?' — '+esc(a.detail):''}<span class="when">${esc(a.at)}</span></div>`).join('')+`</div></div>`:'') };
+  },
+  batch(r){
+    const wts=wtByBatch.get(String(r.id))||[];
+    const issues=[...new Set(wts.flatMap(w=>{ const m=memberIssuesByWt.get(w.name)||[]; return m.length?m:(has(w.issue)?[String(w.issue)]:[]); }))];
+    return { kind:'Batch', title:'batch '+r.id+(has(r.label)?' · '+r.label:''),
+      html: fields([
+        ['Label',r.label],['Status',badge(r.status,'st'),true],['Sets',r.sets],['Done',r.done],
+        ['Created',r.created_at],['Updated',r.updated_at]])
+      + longBlock('Notes', r.notes)
+      + chipRow('Worktrees (sets)', wts.map(w=>{ const m=memberIssuesByWt.get(w.name)||[];
+          return chip('worktree', w.name, w.name+(m.length?' · '+m.length+' issues':(has(w.issue)?' · #'+w.issue:'')), w.status); }).join(''))
+      + chipRow('Issues in this batch', issues.map(n=>chip('issue',n,'#'+n+' · '+((IX.issue.get(String(n))||{}).title||'').slice(0,36))).join('')) };
   },
   topic(r){
     const runs=runByTopic.get(String(r.id))||[], finds=findByTopic.get(r.subject)||[];
@@ -863,8 +895,8 @@ const DETAIL = {
   },
 };
 function openEntity(type,key,push=true){
-  const getter={issue:'issue',finding:'finding',rec:'rec',worktree:'worktree',hubfinding:'hubfinding',consult:'consult',topic:'topic',run:'run',inventory:'inventory',activity:'activity'}[type];
-  const bucket={issue:'issue',finding:'finding',rec:'rec',worktree:'worktree',hubfinding:'hubfinding',consult:'consult',topic:'topic',run:'run',inventory:'inventory',activity:'activity'}[type];
+  const getter={issue:'issue',finding:'finding',rec:'rec',worktree:'worktree',batch:'batch',hubfinding:'hubfinding',consult:'consult',topic:'topic',run:'run',inventory:'inventory',activity:'activity'}[type];
+  const bucket={issue:'issue',finding:'finding',rec:'rec',worktree:'worktree',batch:'batch',hubfinding:'hubfinding',consult:'consult',topic:'topic',run:'run',inventory:'inventory',activity:'activity'}[type];
   const row=IX[bucket] && IX[bucket].get(String(key));
   if(!row) return;
   if(push) drawerStack.push({type,key:String(key)});
@@ -884,7 +916,7 @@ function drawerBack(){ drawerStack.pop(); const top=drawerStack[drawerStack.leng
   if(top) openEntity(top.type, top.key, false); else closeDrawer(); }
 
 // row-click type per view -> drawer type
-const VIEW_TYPE={issues:'issue',findings:'finding',recommendations:'rec',hubfindings:'hubfinding',consults:'consult',worktrees:'worktree',topics:'topic',runs:'run',inventory:'inventory',activity:'activity'};
+const VIEW_TYPE={issues:'issue',findings:'finding',recommendations:'rec',hubfindings:'hubfinding',consults:'consult',worktrees:'worktree',batches:'batch',topics:'topic',runs:'run',inventory:'inventory',activity:'activity'};
 
 /* ---------- global search ---------- */
 function globalSearch(q){
@@ -898,6 +930,7 @@ function globalSearch(q){
   scan('findings','finding',r=>({key:r.id,label:`#${r.id} ${r.title}`}));
   scan('recommendations','rec',r=>({key:r.id,label:`#${r.id} ${r.title}`}));
   scan('worktrees','worktree',r=>({key:r.name,label:`${r.name} · ${r.status}`}));
+  scan('batches','batch',r=>({key:r.id,label:`batch ${r.id} · ${r.status}`}));
   scan('hubfindings','hubfinding',r=>({key:r.id,label:`#${r.id} ${r.title}`}),6);
   scan('consults','consult',r=>({key:r.id,label:`${r.expert} · ${r.followed||'—'} — ${(r.question||'').slice(0,44)}`}),6);
   scan('topics','topic',r=>({key:r.id,label:`${r.subject}/${r.lens}`}));
@@ -970,7 +1003,7 @@ function Count-Rows([string]$json) { if ($json -eq '[]') { 0 } else { @($json | 
 $counts = [ordered]@{
     issues = Count-Rows $qIssues; findings = Count-Rows $qFindings; recs = Count-Rows $qRecs
     'hub-findings' = Count-Rows $qHubFindings; consults = Count-Rows $qConsults
-    worktrees = Count-Rows $qWorktrees; topics = Count-Rows $qTopics; runs = Count-Rows $qRuns
+    worktrees = Count-Rows $qWorktrees; batches = Count-Rows $qBatches; topics = Count-Rows $qTopics; runs = Count-Rows $qRuns
     inventory = Count-Rows $qInventory; activity = Count-Rows $qActivity
 }
 Write-Host ("wrote {0}" -f $Out) -ForegroundColor Green

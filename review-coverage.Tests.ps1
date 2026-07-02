@@ -759,3 +759,18 @@ Describe 'new-batch fire guards' {
         (& sqlite3 $db "SELECT count(*) FROM batch;") | Should -Be '0'
     }
 }
+
+Describe 'ledger-explorer batch view' {
+    BeforeAll { $script:expl = $PSCommandPath.Replace('review-coverage.Tests.ps1', 'ledger-explorer.ps1') }
+    It 'embeds the batch entity and links a worktree to its batch' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 -Title 'wave5' | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status,batch) VALUES('issue-9-x','solver',9,'working',5);" | Out-Null
+        $html = Join-Path $TestDrive 'expl.html'
+        & $script:expl -Database $db -Out $html -Repo 'acme/widgets' -NoOpen | Out-Null
+        $txt = Get-Content $html -Raw
+        $txt | Should -Match '"batches"\s*:'
+        $txt | Should -Match 'wave5'
+        $txt | Should -Match '"batch"\s*:\s*"?5'
+    }
+}
