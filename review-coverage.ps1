@@ -392,7 +392,7 @@ SELECT name, wtype AS type,
   CASE WHEN (SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name) > 1
        THEN COALESCE(CAST(issue AS TEXT),'') || ' (+' || ((SELECT count(*) FROM worktree_issue wi WHERE wi.worktree=worktree.name)-1) || ')'
        ELSE COALESCE(CAST(issue AS TEXT),'') END AS issue,
-  COALESCE(pr,'') AS pr, status,
+  COALESCE(pr,'') AS pr, status, COALESCE(batch,'') AS batch,
   CAST((julianday('now')-julianday(updated_at))*1440 AS INT) AS upd_min,
   (SELECT count(DISTINCT t.path) FROM issue_target t WHERE t.ownership='owns' AND t.issue_number IN (
      SELECT worktree.issue UNION SELECT wi.issue_number FROM worktree_issue wi WHERE wi.worktree=worktree.name)) AS owns,
@@ -400,6 +400,13 @@ SELECT name, wtype AS type,
 FROM worktree
 ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'failed' THEN 1 WHEN 'spec-gate' THEN 2 WHEN 'working' THEN 3
   WHEN 'pr-open' THEN 4 WHEN 'merged' THEN 5 ELSE 6 END, updated_at DESC;
+"@
+        Write-Host "`n=== Batches (open: in-process) ===" -ForegroundColor Cyan
+        Query @"
+SELECT b.id, COALESCE(b.label,'') AS label, b.status,
+  (SELECT count(*) FROM worktree w WHERE w.batch=b.id) AS sets,
+  (SELECT count(*) FROM worktree w WHERE w.batch=b.id AND w.status IN ('merged','retired')) AS done
+FROM batch b WHERE b.status='in-process' ORDER BY b.id DESC LIMIT $N;
 "@
         Write-Host "`n=== Proposed recommendations (out-of-scope follow-ups) ===" -ForegroundColor Cyan
         Query "SELECT id, COALESCE(source_issue,'') AS src, severity AS sev, substr(title,1,55) AS title, worktree FROM recommendation WHERE status='proposed' ORDER BY id LIMIT $N;"

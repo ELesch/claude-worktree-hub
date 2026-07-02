@@ -679,3 +679,20 @@ Describe 'register -Batch' {
         (& sqlite3 $db "SELECT count(*) FROM worktree_issue WHERE worktree='cluster-9-x';") | Should -Be '2'
     }
 }
+
+Describe 'monitor batch awareness' {
+    It 'still lists worktrees (no regression)' {
+        $db = New-TempDb
+        & sqlite3 $db "INSERT INTO worktree(name,wtype,issue,status,batch) VALUES('issue-9-x','solver',9,'working',5);" | Out-Null
+        $out = (& $script:rc monitor -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'issue-9-x'
+    }
+    It 'shows an Open batches section listing open batches by label' {
+        $db = New-TempDb
+        & $script:rc batch set -DbPath $db -Id 5 -Title 'wave5' | Out-Null
+        & sqlite3 $db "INSERT INTO worktree(name,status,batch) VALUES('w1','working',5);" | Out-Null
+        $out = (& $script:rc monitor -DbPath $db 6>&1) -join "`n"
+        $out | Should -Match 'Batches'
+        $out | Should -Match 'wave5'
+    }
+}
