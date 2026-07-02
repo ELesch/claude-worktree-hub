@@ -192,3 +192,21 @@ function ConvertTo-BatchSets {
     }
     [pscustomobject]@{ Sets = $fired; Deferred = $deferred }
 }
+
+# Pure: given composed sets + a resolved name-map (Lowest -> @{Name;Branch}) + a batch id, return per-set
+# SPLAT-READY hashtables the fire step passes directly to new-worktree.ps1 and review-coverage.ps1 register.
+# Single -> -Issue (int); cluster -> -Issues (int[]). Register always carries -Batch.
+function Get-BatchFirePlan {
+    param([Parameter(Mandatory)]$Sets, [Parameter(Mandatory)][hashtable]$NameMap, [int]$BatchId)
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($s in @($Sets)) {
+        $nm = $NameMap[$s.Lowest]; $isCluster = $s.Kind -eq 'cluster'
+        $prov = @{ Name = $nm.Name; Install = $true }
+        $reg = @{ Worktree = $nm.Name; WType = 'solver'; Branch = $nm.Branch; Batch = $BatchId }
+        if ($isCluster) { $prov.Issues = @($s.Members); $reg.Issues = @($s.Members) }
+        else { $prov.Issue = [int]$s.Lowest; $reg.Issue = [int]$s.Lowest }
+        $out.Add([pscustomobject]@{ Kind = $s.Kind; Name = $nm.Name; Branch = $nm.Branch
+                Members = @($s.Members); Lowest = [int]$s.Lowest; Provision = $prov; Register = $reg })
+    }
+    @($out)
+}

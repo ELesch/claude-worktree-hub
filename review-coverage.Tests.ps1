@@ -696,3 +696,25 @@ Describe 'monitor batch awareness' {
         $out | Should -Match 'wave5'
     }
 }
+
+Describe 'Get-BatchFirePlan' {
+    BeforeAll { . (Join-Path $PSScriptRoot 'ledger-lib.ps1') }
+    It 'builds provision + register splats per set (single and cluster)' {
+        $sets = @(
+            [pscustomobject]@{ Kind = 'single'; Members = @(9); Lowest = 9 },
+            [pscustomobject]@{ Kind = 'cluster'; Members = @(12, 15); Lowest = 12 }
+        )
+        $names = @{ 9 = @{ Name = 'issue-9-x'; Branch = 'fix/issue-9-x' }; 12 = @{ Name = 'cluster-12-y'; Branch = 'fix/cluster-12-y' } }
+        $p = Get-BatchFirePlan -Sets $sets -NameMap $names -BatchId 5
+        @($p).Count | Should -Be 2
+        $p[0].Provision.Name  | Should -Be 'issue-9-x'
+        $p[0].Provision.Issue | Should -Be 9
+        $p[0].Provision.ContainsKey('Issues') | Should -BeFalse
+        $p[0].Register.Issue  | Should -Be 9
+        $p[0].Register.Batch  | Should -Be 5
+        ($p[1].Provision.Issues -join ',') | Should -Be '12,15'
+        $p[1].Provision.ContainsKey('Issue') | Should -BeFalse
+        ($p[1].Register.Issues -join ',') | Should -Be '12,15'
+        $p[1].Register.Batch | Should -Be 5
+    }
+}
